@@ -100,6 +100,15 @@ check "unit ExecStart references xiaoguai-core" \
 check "config example installed"  \
     test -f /etc/xiaoguai/config.yaml.example
 
+# The %post/postinst scriptlets seed /etc/xiaoguai/config.yaml from the
+# example above, so an example the binary cannot parse means every fresh
+# install dies in a systemd restart loop (v1.34.0 shipped exactly that: a
+# bare `scheduler.sinks:` header parsed as null). Existence is not enough —
+# feed it to the real binary and assert it loads.
+check "config example parses (binary can load it)"  \
+    bash -c 'out=$(/usr/local/bin/xiaoguai --config /etc/xiaoguai/config.yaml.example doctor 2>&1 || true); \
+             ! grep -qiE "load config|invalid type|expected struct|missing field" <<< "$out"'
+
 # ---- Docs -------------------------------------------------------------------
 
 check "README installed"  \

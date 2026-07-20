@@ -16,35 +16,72 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// serde adapter: accept a present-but-empty YAML key as an omitted one.
+///
+/// `#[serde(default)]` alone only fires when the key is *absent*. A block
+/// header whose children are all commented out —
+///
+/// ```yaml
+/// scheduler:
+///   sinks:
+///     # feishu:
+///     #   webhook_url: ...
+/// ```
+///
+/// — parses as `sinks: null`, which serde rejects with `invalid type: unit
+/// value, expected struct SchedulerSinkSettings`. That shape is what the
+/// shipped `config.example.yaml` looks like, so it bricked every rpm/deb
+/// install at boot (the %post scriptlet seeds `config.yaml` from it).
+/// Commenting out a block must degrade to "use the defaults", never to a
+/// refuse-to-start.
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// `Default` is derived: every block below now owns its own `Default`
+/// impl, so the defaults live next to the fields they describe instead of
+/// being duplicated in a hand-written `Settings::default()`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
+    /// The four blocks below stay *required* (a config.yaml with no
+    /// `server:` key at all is still an error), but `null_as_default`
+    /// makes a present-but-empty block fall back to its defaults instead
+    /// of failing the load.
+    #[serde(deserialize_with = "null_as_default")]
     pub server: ServerSettings,
+    #[serde(deserialize_with = "null_as_default")]
     pub database: DatabaseSettings,
+    #[serde(deserialize_with = "null_as_default")]
     pub auth: AuthSettings,
+    #[serde(deserialize_with = "null_as_default")]
     pub audit: AuditSettings,
     /// Scheduler-side configuration. Optional so existing
     /// config.yaml files from v0.10.0/v0.10.1 still deserialize.
     /// v0.10.3 carries push-sink config under `scheduler.sinks.*`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub scheduler: SchedulerSettings,
     /// v0.7.4: IM gateway runtime knobs.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub im: ImSettings,
     /// v0.11.2: eval pane substrate. Optional so existing
     /// config.yaml files still deserialize; defaults to disabled
     /// (`suites_dir = "./eval-suites"`, endpoints return 503 when
     /// the directory doesn't exist).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub eval: EvalSettings,
     /// Sprint-12 (S12-0): agent-loop runtime knobs. Optional so existing
     /// v1.8.x config.yaml files deserialize unchanged.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub agent: AgentSettings,
     /// DEC-036 (P1): long-term memory embedder selection. Optional so existing
     /// config files deserialize unchanged; the `OLLAMA_HOST` env still overrides.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub memory: MemorySettings,
 }
 
@@ -65,6 +102,23 @@ pub struct ServerSettings {
     pub static_dir: Option<String>,
 }
 
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self {
+            // SEC-01: bind to loopback by default. Binding all interfaces
+            // (0.0.0.0) with the auth gate disabled exposed the whole
+            // `/v1/**` surface to the LAN/internet on a fresh `serve`. A
+            // safe default + an explicit refuse-to-start guard (see
+            // `xiaoguai-core::run_serve`) replaces the old warn-and-continue.
+            // Container images opt back into 0.0.0.0 via
+            // `XIAOGUAI_SERVER__HOST` (set in the Dockerfile/compose).
+            host: "127.0.0.1".into(),
+            port: 7600,
+            static_dir: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseSettings {
     /// `SQLite` store location (DEC-033). A filesystem path or `sqlite://…` URL.
@@ -74,6 +128,15 @@ pub struct DatabaseSettings {
     pub url: String,
     #[serde(default = "default_db_max_connections")]
     pub max_connections: u32,
+}
+
+impl Default for DatabaseSettings {
+    fn default() -> Self {
+        Self {
+            url: default_db_url(),
+            max_connections: default_db_max_connections(),
+        }
+    }
 }
 
 /// Empty = resolve to the default per-user `SQLite` path at connect time.
@@ -91,7 +154,7 @@ const fn default_db_max_connections() -> u32 {
 /// unaffected.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MemorySettings {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub embedder: EmbedderSettings,
 }
 
@@ -116,7 +179,7 @@ pub enum EmbedderSettings {
 /// checked via HTTP Basic auth. When either field is empty the gate is
 /// disabled and the server runs open (convenient for a localhost run);
 /// front it with a credential before exposing it on a URL.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AuthSettings {
     /// Owner username. Empty = auth disabled.
     ///
@@ -159,6 +222,17 @@ pub struct AuditSettings {
     pub signing_key_env: String,
 }
 
+impl Default for AuditSettings {
+    fn default() -> Self {
+        Self {
+            // SEC-15: the dev key is intentionally detectable — `run_serve`
+            // refuses to sign a production audit chain with it.
+            hmac_key: DEV_AUDIT_HMAC_KEY.into(),
+            signing_key_env: default_signing_key_env(),
+        }
+    }
+}
+
 fn default_signing_key_env() -> String {
     "XIAOGUAI_AUDIT_SIGNING_KEY".into()
 }
@@ -176,8 +250,10 @@ pub struct SchedulerSettings {
     #[serde(default = "default_tick_interval_secs")]
     pub tick_interval_secs: u64,
     /// Per-sink config blocks. Every field is `Option<_>` so an
-    /// operator wires only the sinks they actually deploy.
-    #[serde(default)]
+    /// operator wires only the sinks they actually deploy — including
+    /// "none of them", which is what a `sinks:` header with all its
+    /// children commented out means (see `null_as_default`).
+    #[serde(default, deserialize_with = "null_as_default")]
     pub sinks: SchedulerSinkSettings,
     /// v0.12.2: filesystem-watch source bootstrap. Off by default so
     /// existing deployments keep the v0.12.0 webhook-only behaviour.
@@ -186,7 +262,7 @@ pub struct SchedulerSettings {
     /// `scheduled_jobs` row whose `trigger.type == "file_watch"`
     /// (operator-friendly, edit a job in the admin pane to add a
     /// watch). Both lists merge into one [`FileWatchSource`].
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub file_watch: FileWatchSettings,
 }
 
@@ -337,7 +413,7 @@ fn default_eval_suites_dir() -> String {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentSettings {
     /// `HotL` (human-on-the-loop) gating knobs.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub hotl: HotlSettings,
 }
 
@@ -452,42 +528,6 @@ impl Default for HotlSettings {
             suspend_on_escalate: default_suspend_on_escalate_true(),
             expiry: HashMap::new(),
             redaction_policy_required: false,
-        }
-    }
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            server: ServerSettings {
-                // SEC-01: bind to loopback by default. Binding all interfaces
-                // (0.0.0.0) with the auth gate disabled exposed the whole
-                // `/v1/**` surface to the LAN/internet on a fresh `serve`. A
-                // safe default + an explicit refuse-to-start guard (see
-                // `xiaoguai-core::run_serve`) replaces the old warn-and-continue.
-                // Container images opt back into 0.0.0.0 via
-                // `XIAOGUAI_SERVER__HOST` (set in the Dockerfile/compose).
-                host: "127.0.0.1".into(),
-                port: 7600,
-                static_dir: None,
-            },
-            database: DatabaseSettings {
-                url: default_db_url(),
-                max_connections: default_db_max_connections(),
-            },
-            auth: AuthSettings {
-                username: String::new(),
-                password: String::new(),
-            },
-            audit: AuditSettings {
-                hmac_key: DEV_AUDIT_HMAC_KEY.into(),
-                signing_key_env: default_signing_key_env(),
-            },
-            scheduler: SchedulerSettings::default(),
-            im: ImSettings::default(),
-            eval: EvalSettings::default(),
-            agent: AgentSettings::default(),
-            memory: MemorySettings::default(),
         }
     }
 }
@@ -609,5 +649,73 @@ mod tests {
             !s.agent.hotl.suspend_on_escalate,
             "explicit `false` must opt out of v1.9.0 suspension behaviour"
         );
+    }
+
+    /// Regression (v1.34.0 field report): the rpm/deb `%post` scriptlet seeds
+    /// `/etc/xiaoguai/config.yaml` from this exact file, so if it fails to
+    /// deserialize every packaged install crashes on boot in a systemd restart
+    /// loop. Load the shipped example itself — not a hand-written copy — so the
+    /// test can't drift away from what we actually ship.
+    #[test]
+    fn shipped_example_config_deserializes() {
+        let example = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../deploy/config.example.yaml")
+            .canonicalize()
+            .expect("deploy/config.example.yaml must exist");
+        let s = Settings::load_from_file(&example)
+            .unwrap_or_else(|e| panic!("shipped example config must load, got: {e}"));
+        assert_eq!(
+            s.server.port, 7600,
+            "example must document the :7600 default"
+        );
+
+        // Deserializing is necessary but not sufficient: v1.34.0's example ALSO
+        // paired `host: 0.0.0.0` with an empty auth block, which is exactly the
+        // combination `run_serve`'s SEC-01 guard refuses — so a packaged install
+        // that got past the parse error died on the very next check. Mirror that
+        // guard here so the shipped example stays bootable as packaged.
+        let loopback = s.server.host.eq_ignore_ascii_case("localhost")
+            || s.server
+                .host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        assert!(
+            loopback || s.auth.is_enabled(),
+            "shipped example binds non-loopback `{}` with auth disabled — SEC-01 \
+             makes `serve` refuse to start, so every packaged install would fail",
+            s.server.host,
+        );
+    }
+
+    /// A block header whose children are all commented out parses as null,
+    /// which serde rejects with "invalid type: unit value, expected struct".
+    /// That is precisely how `scheduler.sinks` bricked v1.34.0 rpm installs.
+    /// Every optional block must degrade to its defaults instead.
+    #[test]
+    fn empty_nested_blocks_fall_back_to_defaults() {
+        use std::io::Write;
+        let mut f = tempfile::Builder::new()
+            .suffix(".yaml")
+            .tempfile()
+            .expect("tmpfile");
+        // `sinks:`, `file_watch:`, `hotl:` and `auth:` are all present-but-null
+        // here — the shape an operator produces by commenting a block out.
+        writeln!(
+            f,
+            "server:\n  host: 127.0.0.1\n  port: 7600\ndatabase:\n  url: sqlite:///tmp/n.db\nauth:\naudit:\n  hmac_key: dev-only-change-me-32-bytes-min\nscheduler:\n  enabled: false\n  sinks:\n  file_watch:\nagent:\n  hotl:\nmemory:\n"
+        )
+        .expect("write tmp yaml");
+
+        let s = Settings::load_from_file(f.path())
+            .unwrap_or_else(|e| panic!("null blocks must degrade to defaults, got: {e}"));
+
+        assert!(s.scheduler.sinks.feishu.is_none(), "null sinks => no sinks");
+        assert!(!s.scheduler.file_watch.enabled);
+        assert!(
+            s.agent.hotl.suspend_on_escalate,
+            "null hotl block must keep the v1.9.0 default-true"
+        );
+        assert!(!s.auth.is_enabled(), "null auth block => gate disabled");
+        assert_eq!(s.memory.embedder, EmbedderSettings::InMemory);
     }
 }
