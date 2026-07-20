@@ -140,6 +140,86 @@ If that errors (`unknown shorthand flag: 'f'`), the plugin is missing: install
 backward-compat). For real LLM providers, MCP registration, the admin console,
 and config details, see [`docs/user-guide/quickstart.md`](docs/user-guide/quickstart.md).
 
+### Offline / air-gapped install
+
+The target host needs no network. One binary carries the server, CLI, web UI,
+migrations, and catalog seed; state is an embedded SQLite file. Download on a
+connected machine, carry the files over, install.
+
+**1 — Download** from the [latest release](https://github.com/xiaoguai-agent/xiaoguai/releases/latest):
+
+| Target host | Files |
+|---|---|
+| RHEL / Rocky / Fedora (amd64) | `xiaoguai-cli-*.x86_64.rpm` + `SHA256SUMS-packages` |
+| Debian / Ubuntu (amd64) | `xiaoguai-cli_*_amd64.deb` + `SHA256SUMS-packages` |
+| Any glibc 2.35+ Linux (amd64 / arm64) | `xiaoguai-vX.Y.Z-<arch>-unknown-linux-gnu.tar.gz` + `SHA256SUMS` |
+
+**2 — Verify, then transfer** by whatever your process allows (scp, USB, …):
+
+```bash
+sha256sum -c SHA256SUMS-packages --ignore-missing
+```
+
+**3 — Install on the offline host.** The two paths differ in one way that
+matters:
+
+```bash
+# .rpm / .deb — seeds /etc/xiaoguai/config.yaml AND starts the systemd unit
+sudo rpm -i xiaoguai-cli-*.x86_64.rpm            # RHEL family
+sudo apt install ./xiaoguai-cli_*_amd64.deb      # Debian family
+
+# tarball — installs config.example.yaml and enables the unit, but does NOT
+# seed config.yaml or start the service. Do both yourself:
+tar xzf xiaoguai-v*-unknown-linux-gnu.tar.gz && cd xiaoguai-v*/
+sudo bash scripts/install.sh
+sudo cp /etc/xiaoguai/config.example.yaml /etc/xiaoguai/config.yaml
+sudo systemctl start xiaoguai-core
+```
+
+Either way you land on `127.0.0.1:7600`, which is reachable only from the host
+itself.
+
+**4 — To reach it from other machines**, bind all interfaces. SEC-01 refuses to
+start an unauthenticated non-loopback bind, so set owner credentials in the same
+edit:
+
+```bash
+sudo sed -i -e 's/^  host: 127.0.0.1$/  host: 0.0.0.0/' \
+            -e 's/^  username: ""/  username: "owner"/' \
+            -e 's/^  password: ""/  password: "<a strong password>"/' \
+            /etc/xiaoguai/config.yaml
+sudo systemctl restart xiaoguai-core
+```
+
+**5 — Confirm before trusting it:**
+
+```bash
+xiaoguai --config /etc/xiaoguai/config.yaml doctor
+```
+
+A `✓ bind/auth` row means `serve` clears the SEC-01 guard; `! database not
+created yet` is normal before first start.
+
+Once it is running, `/healthz` answers `ok` to anyone — it is deliberately
+exempt from the gate, so it cannot tell you whether auth is on. Check an
+authenticated route for that:
+
+```bash
+curl -o /dev/null -w '%{http_code}\n' http://<host>:7600/v1/sessions
+#   -> 401 without credentials
+curl -o /dev/null -w '%{http_code}\n' -u owner:<password> http://<host>:7600/v1/sessions
+#   -> 200 with them
+```
+
+**Upgrades keep your config.** The package scriptlets seed
+`/etc/xiaoguai/config.yaml` on *first install only*, so `rpm -U` and `apt
+install` never overwrite your edits — including the credentials from step 4.
+
+**What still needs a model.** Everything above runs with no egress, but
+answering a chat does not: either register a provider pointing at a local
+[Ollama](https://ollama.com), or give the host reachability to your LLM
+provider. Without one, the server still boots and serves the UI.
+
 ### First chat — talk to your running server
 
 Out of the box `xiaoguai serve` boots on a built-in `MockBackend`, so the
