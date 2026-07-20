@@ -16,7 +16,13 @@ server:
   # start to avoid exposing the unauthenticated /v1 API. To run on 0.0.0.0
   # without auth behind a trusted reverse proxy, set the env opt-out
   # XIAOGUAI_ALLOW_UNAUTHENTICATED_NONLOOPBACK=1.
-  host: 0.0.0.0
+  #
+  # This ships as 127.0.0.1 so a packaged install (rpm/deb seeds
+  # /etc/xiaoguai/config.yaml from this file) BOOTS. `0.0.0.0` here with the
+  # empty auth block below is exactly the combination SEC-01 refuses, which
+  # made a fresh install die in a restart loop. To expose it on the LAN:
+  # set auth.username + auth.password FIRST, then change this to 0.0.0.0.
+  host: 127.0.0.1
   port: 7600
   # Optional: directory holding the built web UIs. When set (and present),
   # the server serves chat-ui at / and admin-ui at /admin/ from
@@ -82,7 +88,12 @@ scheduler:
   tick_interval_secs: 30
 
   # Per-sink config. Uncomment + fill in the sink(s) you want.
-  sinks:
+  #
+  # Keep the `{}` while every sink below stays commented out: a bare `sinks:`
+  # header with no children parses as null, not as an empty block.
+  # When you DO uncomment a sink, delete the `{}` — leaving both is a YAML
+  # syntax error ("did not find expected key").
+  sinks: {}
     # feishu:
     #   webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/...
     #   secret: ""

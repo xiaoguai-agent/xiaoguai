@@ -16,41 +16,87 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// serde adapter: accept a present-but-empty YAML key as an omitted one.
+///
+/// `#[serde(default)]` alone only fires when the key is *absent*. A block
+/// header whose children are all commented out —
+///
+/// ```yaml
+/// scheduler:
+///   sinks:
+///     # feishu:
+///     #   webhook_url: ...
+/// ```
+///
+/// — parses as `sinks: null`, which serde rejects with `invalid type: unit
+/// value, expected struct SchedulerSinkSettings`. That shape is what the
+/// shipped `config.example.yaml` looks like, so it bricked every rpm/deb
+/// install at boot (the %post scriptlet seeds `config.yaml` from it).
+/// Commenting out a block must degrade to "use the defaults", never to a
+/// refuse-to-start.
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// `Default` is derived: every block below now owns its own `Default`
+/// impl, so the defaults live next to the fields they describe instead of
+/// being duplicated in a hand-written `Settings::default()`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
+    /// The four blocks below stay *required* (a config.yaml with no
+    /// `server:` key at all is still an error), but `null_as_default`
+    /// makes a present-but-empty block fall back to its defaults instead
+    /// of failing the load.
+    #[serde(deserialize_with = "null_as_default")]
     pub server: ServerSettings,
+    #[serde(deserialize_with = "null_as_default")]
     pub database: DatabaseSettings,
+    #[serde(deserialize_with = "null_as_default")]
     pub auth: AuthSettings,
+    #[serde(deserialize_with = "null_as_default")]
     pub audit: AuditSettings,
     /// Scheduler-side configuration. Optional so existing
     /// config.yaml files from v0.10.0/v0.10.1 still deserialize.
     /// v0.10.3 carries push-sink config under `scheduler.sinks.*`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub scheduler: SchedulerSettings,
     /// v0.7.4: IM gateway runtime knobs.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub im: ImSettings,
     /// v0.11.2: eval pane substrate. Optional so existing
     /// config.yaml files still deserialize; defaults to disabled
     /// (`suites_dir = "./eval-suites"`, endpoints return 503 when
     /// the directory doesn't exist).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub eval: EvalSettings,
     /// Sprint-12 (S12-0): agent-loop runtime knobs. Optional so existing
     /// v1.8.x config.yaml files deserialize unchanged.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub agent: AgentSettings,
     /// DEC-036 (P1): long-term memory embedder selection. Optional so existing
     /// config files deserialize unchanged; the `OLLAMA_HOST` env still overrides.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub memory: MemorySettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerSettings {
+    /// `host` and `port` carry field-level defaults, not just the block-level
+    /// `null_as_default`. An env override *inside* a block (the container image
+    /// sets `XIAOGUAI_SERVER__HOST` and `__STATIC_DIR` but not `__PORT`) merges
+    /// into the null block, so it is no longer null and `null_as_default` never
+    /// fires — leaving a partial map that failed with `missing configuration
+    /// field "server.port"`. Defaulting the fields closes that hole whatever
+    /// the layering.
+    #[serde(default = "default_server_host")]
     pub host: String,
+    #[serde(default = "default_server_port")]
     pub port: u16,
     /// Optional directory holding the built web UIs. When set (and it exists),
     /// `xiaoguai-core` serves `chat-ui` at `/` and `admin-ui` at `/admin/`
@@ -65,6 +111,30 @@ pub struct ServerSettings {
     pub static_dir: Option<String>,
 }
 
+/// SEC-01: bind to loopback by default. Binding all interfaces (0.0.0.0) with
+/// the auth gate disabled exposed the whole `/v1/**` surface to the
+/// LAN/internet on a fresh `serve`. A safe default + an explicit
+/// refuse-to-start guard (see `xiaoguai-core::run_serve`) replaces the old
+/// warn-and-continue. Container images opt back into 0.0.0.0 via
+/// `XIAOGUAI_SERVER__HOST` (set in the Dockerfile/compose).
+fn default_server_host() -> String {
+    "127.0.0.1".into()
+}
+
+const fn default_server_port() -> u16 {
+    7600
+}
+
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self {
+            host: default_server_host(),
+            port: default_server_port(),
+            static_dir: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseSettings {
     /// `SQLite` store location (DEC-033). A filesystem path or `sqlite://…` URL.
@@ -74,6 +144,15 @@ pub struct DatabaseSettings {
     pub url: String,
     #[serde(default = "default_db_max_connections")]
     pub max_connections: u32,
+}
+
+impl Default for DatabaseSettings {
+    fn default() -> Self {
+        Self {
+            url: default_db_url(),
+            max_connections: default_db_max_connections(),
+        }
+    }
 }
 
 /// Empty = resolve to the default per-user `SQLite` path at connect time.
@@ -91,7 +170,7 @@ const fn default_db_max_connections() -> u32 {
 /// unaffected.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MemorySettings {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub embedder: EmbedderSettings,
 }
 
@@ -116,7 +195,7 @@ pub enum EmbedderSettings {
 /// checked via HTTP Basic auth. When either field is empty the gate is
 /// disabled and the server runs open (convenient for a localhost run);
 /// front it with a credential before exposing it on a URL.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AuthSettings {
     /// Owner username. Empty = auth disabled.
     ///
@@ -149,6 +228,14 @@ pub const DEV_AUDIT_HMAC_KEY: &str = "dev-only-change-me-32-bytes-min";
 pub struct AuditSettings {
     /// HMAC-SHA256 signing key for the audit chain. **NEVER** check in a real key.
     /// In production load via env or external secrets manager.
+    ///
+    /// Defaults to the well-known dev key for the same reason `server.host`
+    /// does (see there): an env override landing elsewhere in this block would
+    /// otherwise leave a partial map and fail the load. Defaulting is safe
+    /// because the dev key is *detectable* — `xiaoguai-core` sources the
+    /// production chain key from `signing_key_env` and never from here, and
+    /// `commands::mod` refuses to sign with this value (SEC-15).
+    #[serde(default = "default_audit_hmac_key")]
     pub hmac_key: String,
     /// v0.6.5: env-var name to read the production audit signing key from
     /// when wiring `SqliteAuditSink` in `xiaoguai-core`. The dev `hmac_key`
@@ -157,6 +244,21 @@ pub struct AuditSettings {
     /// real key in the named env var.
     #[serde(default = "default_signing_key_env")]
     pub signing_key_env: String,
+}
+
+/// SEC-15: the dev key is intentionally detectable — callers refuse to sign a
+/// production audit chain with it.
+fn default_audit_hmac_key() -> String {
+    DEV_AUDIT_HMAC_KEY.into()
+}
+
+impl Default for AuditSettings {
+    fn default() -> Self {
+        Self {
+            hmac_key: default_audit_hmac_key(),
+            signing_key_env: default_signing_key_env(),
+        }
+    }
 }
 
 fn default_signing_key_env() -> String {
@@ -176,8 +278,10 @@ pub struct SchedulerSettings {
     #[serde(default = "default_tick_interval_secs")]
     pub tick_interval_secs: u64,
     /// Per-sink config blocks. Every field is `Option<_>` so an
-    /// operator wires only the sinks they actually deploy.
-    #[serde(default)]
+    /// operator wires only the sinks they actually deploy — including
+    /// "none of them", which is what a `sinks:` header with all its
+    /// children commented out means (see `null_as_default`).
+    #[serde(default, deserialize_with = "null_as_default")]
     pub sinks: SchedulerSinkSettings,
     /// v0.12.2: filesystem-watch source bootstrap. Off by default so
     /// existing deployments keep the v0.12.0 webhook-only behaviour.
@@ -186,7 +290,7 @@ pub struct SchedulerSettings {
     /// `scheduled_jobs` row whose `trigger.type == "file_watch"`
     /// (operator-friendly, edit a job in the admin pane to add a
     /// watch). Both lists merge into one [`FileWatchSource`].
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub file_watch: FileWatchSettings,
 }
 
@@ -214,8 +318,9 @@ pub struct FileWatchSettings {
     pub enabled: bool,
     /// Static routes. One entry per `(job_id, path)` binding. Empty by
     /// default; operators add entries in `config.yaml` for ops
-    /// scenarios that shouldn't require a DB write.
-    #[serde(default)]
+    /// scenarios that shouldn't require a DB write. A present-but-null
+    /// `routes:` means "none" rather than a parse error.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub routes: Vec<FileWatchRoute>,
     /// When `true` AND `enabled` is true, `xiaoguai-core` scans
     /// `scheduled_jobs` for rows whose trigger type is `file_watch`
@@ -337,7 +442,7 @@ fn default_eval_suites_dir() -> String {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentSettings {
     /// `HotL` (human-on-the-loop) gating knobs.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub hotl: HotlSettings,
 }
 
@@ -366,12 +471,21 @@ mod humantime_serde_map {
 
     /// Deserialise each value via `humantime_serde::Serde<Duration>`,
     /// accepting human strings like `"24h"` or numeric seconds.
+    ///
+    /// A present-but-null `expiry:` yields an empty map rather than an error.
+    /// The shipped example lists `tool`/`mcp`/`skill` under this key, and
+    /// commenting all three out — the natural way to say "no per-scope
+    /// overrides" — would otherwise reproduce the v1.34.0 boot failure
+    /// verbatim. Same contract as the crate-level `null_as_default`, spelled
+    /// separately because `with = "humantime_serde_map"` owns this field.
     pub fn deserialize<'de, D>(d: D) -> Result<HashMap<String, Duration>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let wrapped: HashMap<String, humantime_serde::Serde<Duration>> = HashMap::deserialize(d)?;
+        let wrapped: Option<HashMap<String, humantime_serde::Serde<Duration>>> =
+            Option::deserialize(d)?;
         Ok(wrapped
+            .unwrap_or_default()
             .into_iter()
             .map(|(k, v)| (k, v.into_inner()))
             .collect())
@@ -456,42 +570,6 @@ impl Default for HotlSettings {
     }
 }
 
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            server: ServerSettings {
-                // SEC-01: bind to loopback by default. Binding all interfaces
-                // (0.0.0.0) with the auth gate disabled exposed the whole
-                // `/v1/**` surface to the LAN/internet on a fresh `serve`. A
-                // safe default + an explicit refuse-to-start guard (see
-                // `xiaoguai-core::run_serve`) replaces the old warn-and-continue.
-                // Container images opt back into 0.0.0.0 via
-                // `XIAOGUAI_SERVER__HOST` (set in the Dockerfile/compose).
-                host: "127.0.0.1".into(),
-                port: 7600,
-                static_dir: None,
-            },
-            database: DatabaseSettings {
-                url: default_db_url(),
-                max_connections: default_db_max_connections(),
-            },
-            auth: AuthSettings {
-                username: String::new(),
-                password: String::new(),
-            },
-            audit: AuditSettings {
-                hmac_key: DEV_AUDIT_HMAC_KEY.into(),
-                signing_key_env: default_signing_key_env(),
-            },
-            scheduler: SchedulerSettings::default(),
-            im: ImSettings::default(),
-            eval: EvalSettings::default(),
-            agent: AgentSettings::default(),
-            memory: MemorySettings::default(),
-        }
-    }
-}
-
 impl Settings {
     /// Load settings from a YAML file + environment overrides.
     ///
@@ -537,7 +615,25 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use super::*;
+
+    /// Both loaders layer process env on top of their base, and env is
+    /// process-global while cargo runs these tests as threads in ONE process.
+    /// Without this lock, `load_from_env_applies_nested_overrides` setting
+    /// `XIAOGUAI_SERVER__PORT=9999` leaks into whatever else is mid-load —
+    /// measured 9 failures in 12 runs at `--test-threads=16`. Every test that
+    /// reads or writes env must hold it.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Take [`ENV_LOCK`], ignoring poisoning: a panic in one test must fail
+    /// that test, not cascade into every other one.
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 
     /// Regression: env overrides must reach nested keys. `with_prefix("XIAOGUAI")`
     /// without `prefix_separator("_")` left a leading `_` on the stripped key, so
@@ -547,6 +643,7 @@ mod tests {
     #[test]
     fn load_from_env_applies_nested_overrides() {
         const DB: &str = "sqlite:///tmp/envhost.db";
+        let _env = env_guard();
         std::env::set_var("XIAOGUAI_DATABASE__URL", DB);
         std::env::set_var("XIAOGUAI_SERVER__PORT", "9999");
         let s = Settings::load_from_env().expect("load_from_env");
@@ -579,6 +676,7 @@ mod tests {
     /// nested `#[serde(default)]` on the surrounding blocks.
     #[test]
     fn agent_block_is_optional_and_defaults_apply() {
+        let _env = env_guard();
         // Reuse the env loader path because it constructs Settings from
         // defaults-as-yaml + env, mirroring how production loads when no
         // file is provided.
@@ -594,7 +692,7 @@ mod tests {
     /// opt-out path documented in RELEASE-LOG v1.9.0 still works.
     #[test]
     fn agent_hotl_suspend_on_escalate_yaml_opt_out_works() {
-        use std::io::Write;
+        let _env = env_guard();
         let mut f = tempfile::Builder::new()
             .suffix(".yaml")
             .tempfile()
@@ -608,6 +706,141 @@ mod tests {
         assert!(
             !s.agent.hotl.suspend_on_escalate,
             "explicit `false` must opt out of v1.9.0 suspension behaviour"
+        );
+    }
+
+    /// Regression (v1.34.0 field report): the rpm/deb `%post` scriptlet seeds
+    /// `/etc/xiaoguai/config.yaml` from this exact file, so if it fails to
+    /// deserialize every packaged install crashes on boot in a systemd restart
+    /// loop. Load the shipped example itself — not a hand-written copy — so the
+    /// test can't drift away from what we actually ship.
+    #[test]
+    fn shipped_example_config_deserializes() {
+        let _env = env_guard();
+        let example = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../deploy/config.example.yaml")
+            .canonicalize()
+            .expect("deploy/config.example.yaml must exist");
+        let s = Settings::load_from_file(&example)
+            .unwrap_or_else(|e| panic!("shipped example config must load, got: {e}"));
+        assert_eq!(
+            s.server.port, 7600,
+            "example must document the :7600 default"
+        );
+
+        // Deserializing is necessary but not sufficient: v1.34.0's example ALSO
+        // paired `host: 0.0.0.0` with an empty auth block, which is exactly the
+        // combination `run_serve`'s SEC-01 guard refuses — so a packaged install
+        // that got past the parse error died on the very next check. Mirror that
+        // guard here so the shipped example stays bootable as packaged.
+        let loopback = s.server.host.eq_ignore_ascii_case("localhost")
+            || s.server
+                .host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        assert!(
+            loopback || s.auth.is_enabled(),
+            "shipped example binds non-loopback `{}` with auth disabled — SEC-01 \
+             makes `serve` refuse to start, so every packaged install would fail",
+            s.server.host,
+        );
+    }
+
+    /// A block header whose children are all commented out parses as null,
+    /// which serde rejects with "invalid type: unit value, expected struct".
+    /// That is precisely how `scheduler.sinks` bricked v1.34.0 rpm installs.
+    /// Every optional block must degrade to its defaults instead.
+    #[test]
+    fn empty_nested_blocks_fall_back_to_defaults() {
+        let _env = env_guard();
+        let mut f = tempfile::Builder::new()
+            .suffix(".yaml")
+            .tempfile()
+            .expect("tmpfile");
+        // EVERY block is present-but-null here — the shape an operator produces
+        // by commenting a block's children out. Includes the two the first cut
+        // of this fix missed: `agent.hotl.expiry` (a map behind
+        // `with = "humantime_serde_map"`) and `scheduler.file_watch.routes` (a
+        // sequence), plus `server:`/`audit:`, whose sub-fields had no defaults.
+        writeln!(
+            f,
+            "server:\ndatabase:\nauth:\naudit:\nscheduler:\n  enabled: false\n  sinks:\n  file_watch:\n    routes:\nagent:\n  hotl:\n    expiry:\nmemory:\n  embedder:\neval:\nim:\n"
+        )
+        .expect("write tmp yaml");
+
+        let s = Settings::load_from_file(f.path())
+            .unwrap_or_else(|e| panic!("null blocks must degrade to defaults, got: {e}"));
+
+        assert!(s.scheduler.sinks.feishu.is_none(), "null sinks => no sinks");
+        assert!(!s.scheduler.file_watch.enabled);
+        assert!(
+            s.scheduler.file_watch.routes.is_empty(),
+            "null routes => none"
+        );
+        assert!(
+            s.agent.hotl.suspend_on_escalate,
+            "null hotl block must keep the v1.9.0 default-true"
+        );
+        assert!(
+            s.agent.hotl.expiry.is_empty(),
+            "null expiry => no overrides"
+        );
+        assert!(!s.auth.is_enabled(), "null auth block => gate disabled");
+        assert_eq!(s.memory.embedder, EmbedderSettings::InMemory);
+        // A null `server:`/`audit:` must land on the safe defaults, not on
+        // whatever a partially-populated struct would have held.
+        assert_eq!(s.server.host, "127.0.0.1");
+        assert_eq!(s.server.port, 7600);
+        assert_eq!(s.audit.hmac_key, DEV_AUDIT_HMAC_KEY);
+        assert_eq!(s.eval.suites_dir, default_eval_suites_dir());
+    }
+
+    /// Regression for the gap the first cut of this fix left open: an env
+    /// override landing *inside* a null block merges into it, so the block is
+    /// no longer null and `null_as_default` never fires. The container image
+    /// sets `XIAOGUAI_SERVER__HOST` + `__STATIC_DIR` but not `__PORT`, so a
+    /// mounted config with `server:` commented out failed with `missing
+    /// configuration field "server.port"`. Field-level defaults close it.
+    #[test]
+    fn env_override_into_a_null_block_still_loads() {
+        let _env = env_guard();
+        let mut f = tempfile::Builder::new()
+            .suffix(".yaml")
+            .tempfile()
+            .expect("tmpfile");
+        writeln!(f, "server:\ndatabase:\nauth:\naudit:\n").expect("write tmp yaml");
+
+        std::env::set_var("XIAOGUAI_SERVER__HOST", "0.0.0.0");
+        std::env::set_var("XIAOGUAI_SERVER__STATIC_DIR", "/app/static");
+        let loaded = Settings::load_from_file(f.path());
+        std::env::remove_var("XIAOGUAI_SERVER__HOST");
+        std::env::remove_var("XIAOGUAI_SERVER__STATIC_DIR");
+
+        let s = loaded.unwrap_or_else(|e| panic!("env-into-null-block must load, got: {e}"));
+        assert_eq!(s.server.host, "0.0.0.0", "the env override must still win");
+        assert_eq!(s.server.port, 7600, "the unset sibling must default");
+        assert_eq!(s.server.static_dir.as_deref(), Some("/app/static"));
+    }
+
+    /// A block that is entirely ABSENT (not merely null) must still be a hard
+    /// error for the four required blocks — `null_as_default` without
+    /// `#[serde(default)]` tolerates null only. Guards against someone adding
+    /// `default` to these fields and silently booting a misspelled config.
+    #[test]
+    fn missing_required_blocks_are_still_an_error() {
+        let _env = env_guard();
+        let mut f = tempfile::Builder::new()
+            .suffix(".yaml")
+            .tempfile()
+            .expect("tmpfile");
+        // `server:` deliberately absent.
+        writeln!(f, "database:\nauth:\naudit:\n").expect("write tmp yaml");
+
+        let err = Settings::load_from_file(f.path())
+            .expect_err("a config.yaml with no `server:` key must not load");
+        assert!(
+            err.contains("server"),
+            "error must name the missing block, got: {err}"
         );
     }
 }
