@@ -101,7 +101,7 @@ jobs:
       # lib, beacon-forensics issue #243) intermittently spins forever at
       # 100% CPU until the box dies. nextest also enforces a per-test
       # terminate (.config/nextest.toml) that kills AND NAMES a hung test.
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2.85.5
         with:
           tool: cargo-nextest
       - uses: Swatinem/rust-cache@v2
@@ -274,7 +274,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.93.0
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2.85.5
         with:
           tool: cargo-nextest
       - uses: actions/download-artifact@v7
