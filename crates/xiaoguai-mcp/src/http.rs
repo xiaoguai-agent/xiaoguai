@@ -110,9 +110,12 @@ impl std::fmt::Debug for HttpMcpClient {
         f.debug_struct("HttpMcpClient")
             .field(
                 "peer",
-                // rmcp 1.8: peer_info() returns an owned Option<ServerInfo>, so
-                // clone the name rather than borrow the closure-local value.
-                &self.service.peer_info().map(|p| p.server_info.name.clone()),
+                // rmcp 3.0: peer_info() hands back Option<Arc<ServerPeerInfo>> —
+                // ServerPeerInfo, not InitializeResult; that is the whole point of
+                // the split, and only the former makes `server_info` optional. So
+                // the name is two layers deep, and `peer_name` flattens both into
+                // Option<String>.
+                &crate::rmcp_convert::peer_name(self.service.peer_info().as_deref()),
             )
             .finish_non_exhaustive()
     }
@@ -218,10 +221,7 @@ impl McpClient for HttpMcpClient {
             .service
             .peer_info()
             .ok_or_else(|| McpError::Protocol("peer info not populated post-handshake".into()))?;
-        Ok(ServerInfo {
-            name: info.server_info.name.clone(),
-            version: info.server_info.version.clone(),
-        })
+        crate::rmcp_convert::server_info_from_rmcp(&info)
     }
 
     async fn list_tools(&self) -> McpResult<Vec<ToolDescriptor>> {
