@@ -16,3 +16,4 @@
 | [0018](0018-rate-limit-backend-selection.md) | Rate-limit backend selection: in-memory default + Redis for HA | Accepted | 2026-05-26 |
 | [0021](0021-rust-toolchain-bump-193.md) | Rust toolchain bump 1.88 → 1.93 (wasmtime 45 CVE fix) | Accepted | 2026-05-31 |
 | [0022](0022-audit-failure-handling.md) | Audit-failure handling: best-effort audit sinks, fail-closed generic runtime hook | Accepted | 2026-06-06 |
+| [0023](0023-rust-toolchain-bump-194.md) | Rust toolchain bump 1.93 → 1.94 (wasmtime 47 CVE fix) | Accepted | 2026-08-23 |

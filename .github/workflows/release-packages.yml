@@ -70,7 +70,7 @@ jobs:
           sed -i "s/^version = \"0.1.0\"/version = \"${VERSION}\"/" Cargo.toml
           echo "Cargo.toml workspace version -> ${VERSION}"
 
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.94.0
 
       - uses: Swatinem/rust-cache@v2
         with:

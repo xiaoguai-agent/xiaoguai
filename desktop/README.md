@@ -44,7 +44,7 @@ conversation while alive, so re-summoning is instant.
    the agent has nothing to answer with.
 
 2. **Tauri v2 system dependencies + Rust** (for building the desktop app):
-   - **Rust** (stable; this repo pins 1.93.0 via `rust-toolchain.toml`).
+   - **Rust** (stable; this repo pins 1.94.0 via `rust-toolchain.toml`).
    - **macOS**: Xcode Command Line Tools (`xcode-select --install`). The system
      WebKit web view is used — no extra runtime to ship.
    - See <https://v2.tauri.app/start/prerequisites/> for the full list.

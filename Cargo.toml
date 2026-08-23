@@ -43,7 +43,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.93"
+rust-version = "1.94"
 license = "Apache-2.0"
 authors = ["Xiaoguai Maintainers"]
 repository = "https://github.com/xiaoguai-agent/xiaoguai"

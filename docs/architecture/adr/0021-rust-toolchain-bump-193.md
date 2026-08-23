@@ -1,7 +1,7 @@
 # ADR-0021 — Bump Rust toolchain 1.88 → 1.93 (wasmtime 38 → 45 for CVE fix)
 
 Date: 2026-05-31
-Status: Accepted
+Status: Superseded by [ADR-0023](0023-rust-toolchain-bump-194.md)
 Supersedes: [ADR-0001](0001-rust-toolchain.md)
 
 ## Context
