@@ -23,6 +23,21 @@ ignore = [
     # files). Unmaintained flag only — no vulnerability; RustSec offers no safe
     # upgrade. Revisit when lopdf moves off ttf-parser.
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained; transitive via pdf-extract/lopdf, no fix available" },
+    # wasmtime: RUSTSEC-2026-0222, "Stores can mix up type indices between
+    # engines" (low, 3.8). Every fixed line — >=46.0.2 and >=47.0.3 — declares
+    # rust-version 1.94.0, but rust-toolchain.toml pins 1.93.0, so taking the
+    # fix is an MSRV bump across every workflow, tracked separately. The flaw
+    # needs two live `Engine`s in one process to confuse indices;
+    # xiaoguai-mcp-exec-wasm holds exactly one, a process-wide
+    # `OnceLock<Engine>` singleton (crates/xiaoguai-mcp-exec-wasm/src/engine.rs
+    # `shared_engine`), so the precondition never occurs here. Drop this the
+    # moment the toolchain moves to 1.94.
+    { id = "RUSTSEC-2026-0222", reason = "wasmtime type-index confusion needs 2 engines; we hold a single OnceLock singleton. Fix requires rustc 1.94 (MSRV bump tracked separately)" },
+    # NB: RUSTSEC-2026-0253 (lru, unsound) is deliberately NOT listed here —
+    # it lives only in `.cargo/audit.toml`. cargo-deny resolves features and
+    # never sees lru, so an entry here would be a stale unmatched ignore
+    # ("advisory-not-detected"); cargo-audit scans Cargo.lock verbatim and does
+    # see it. Same asymmetry as RUSTSEC-2023-0071 — see that file's header.
 ]
 
 # v1.1.8: gating allow-list. Anything not in this list is denied,
