@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ContentBlock, Implementation, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolsCapability,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolsCapability,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::{
@@ -59,11 +59,14 @@ impl ServerHandler for EchoServer {
         })
     }
 
+    // rmcp 3.0 (MRTR): `ServerHandler::call_tool` returns `CallToolResponse`,
+    // whose `Complete` variant carries the old `CallToolResult` alongside the
+    // new `InputRequired` / `Task` outcomes. This mock only ever completes.
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpProtocolError> {
+    ) -> Result<CallToolResponse, McpProtocolError> {
         if request.name != "echo" {
             return Err(McpProtocolError::invalid_params(
                 format!("unknown tool: {}", request.name),
@@ -76,9 +79,7 @@ impl ServerHandler for EchoServer {
             .and_then(|m| m.get("msg"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
-            "echo: {msg}"
-        ))]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!("echo: {msg}"))]).into())
     }
 }
 

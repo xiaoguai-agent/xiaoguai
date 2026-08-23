@@ -9,8 +9,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Implementation, ListToolsResult, PaginatedRequestParams,
-    ServerCapabilities, ServerInfo, ToolsCapability,
+    CallToolRequestParams, CallToolResponse, CallToolResult, Implementation, ListToolsResult,
+    PaginatedRequestParams, ServerCapabilities, ServerInfo, ToolsCapability,
 };
 use rmcp::service::{RequestContext, RoleServer, ServiceExt};
 use rmcp::transport::io::stdio;
@@ -108,11 +108,16 @@ impl ServerHandler for ExecServer {
         })
     }
 
+    // rmcp 3.0 (MRTR) widened this return type to `CallToolResponse`, whose
+    // `Complete` variant carries the old `CallToolResult`. The other variants
+    // — `InputRequired`, `Task` — model servers that pause for client input or
+    // hand back a task handle; this one always runs to completion, so it only
+    // ever produces `Complete` (via the `From<CallToolResult>` conversion).
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpProtocolError> {
+    ) -> Result<CallToolResponse, McpProtocolError> {
         if request.name != EXECUTE_PYTHON {
             return Err(McpProtocolError::invalid_params(
                 format!("unknown tool: {}", request.name),
@@ -136,7 +141,8 @@ impl ServerHandler for ExecServer {
             CallToolResult::error(contents)
         } else {
             CallToolResult::success(contents)
-        })
+        }
+        .into())
     }
 }
 

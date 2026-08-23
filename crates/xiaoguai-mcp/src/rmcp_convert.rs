@@ -16,7 +16,49 @@
 
 use serde_json::Value as JsonValue;
 
-use crate::types::{MutationHint, ToolDescriptor};
+use crate::error::{McpError, McpResult};
+use crate::types::{MutationHint, ServerInfo, ToolDescriptor};
+
+/// Convert an rmcp peer handshake into our [`ServerInfo`].
+///
+/// rmcp 3.0 split the handshake types: `InitializeResult` (the
+/// `initialize` response, where `server_info` is still required) versus
+/// the new [`rmcp::model::ServerPeerInfo`], the negotiated peer state that
+/// `RunningService::peer_info()` now returns. The latter makes
+/// `server_info` optional, because a peer reached through *discovery*
+/// rather than a full `initialize` need not declare its identity.
+///
+/// Both of our transports do a real `initialize`, so in practice the field
+/// is always populated — rmcp fills it via `From<InitializeResult>`. A
+/// `None` therefore means the peer never identified itself.
+///
+/// Nothing in production consumes this today: `McpClient::initialize` has
+/// many impls but its only callers are tests. That is precisely why it
+/// reports rather than substituting a placeholder — a fabricated name
+/// would still read as a successful handshake on the day something real
+/// does start calling it. Matches how an entirely absent `peer_info()` is
+/// already treated at both call sites.
+pub fn server_info_from_rmcp(info: &rmcp::model::ServerPeerInfo) -> McpResult<ServerInfo> {
+    let declared = info
+        .server_info
+        .as_ref()
+        .ok_or_else(|| McpError::Protocol("peer negotiated without declaring serverInfo".into()))?;
+    Ok(ServerInfo {
+        name: declared.name.clone(),
+        version: declared.version.clone(),
+    })
+}
+
+/// The peer's self-declared name, for diagnostics only.
+///
+/// Deliberately lossy where [`server_info_from_rmcp`] is strict: this backs
+/// `Debug` impls, where "handshake not finished yet" and "peer declared no
+/// identity" are equally uninteresting and neither warrants an error.
+#[must_use]
+pub fn peer_name(info: Option<&rmcp::model::ServerPeerInfo>) -> Option<String> {
+    info.and_then(|i| i.server_info.as_ref())
+        .map(|declared| declared.name.clone())
+}
 
 /// Convert one rmcp `tools/list` entry into our cross-transport descriptor.
 ///
