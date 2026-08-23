@@ -22,6 +22,11 @@ jobs:
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
+    env:
+      # One definition, used by the lookup, the create/update and the close.
+      # If these three ever disagree the job silently stops finding its own
+      # tracker and starts minting duplicates again.
+      TRACKER_TITLE: Nightly cargo-audit failure
     steps:
       - uses: actions/checkout@v7
 
@@ -42,7 +47,18 @@ jobs:
           cargo audit --deny warnings 2>&1 | tee audit-report.txt
 
       - name: Prepare issue body on failure
-        if: failure()
+        # Two things going on in this condition.
+        #
+        # Not plain `failure()`: that is true for ANY earlier step failing, and
+        # since these steps now overwrite one shared tracker, a flaked
+        # `cargo install cargo-audit` would replace the real advisory list with
+        # an empty report. Only a genuine audit finding should write.
+        #
+        # The leading `always()` is load-bearing: an `if:` with no status check
+        # function gets an implicit `success() &&` prepended, which is false the
+        # moment the audit step fails — the exact case this must fire on. Drop
+        # it and the job silently stops filing issues altogether.
+        if: always() && steps.audit.outcome == 'failure'
         run: |
           {
             echo "# Nightly cargo-audit failure"
@@ -70,10 +86,12 @@ jobs:
       # Before this, the title carried ${{ github.run_id }}, so every nightly
       # cron minted a brand-new issue for the *same* unresolved advisories —
       # 22 duplicates accumulated over three weeks in Aug 2026. Now we look up
-      # the one open `cargo-audit` issue and hand its number to
-      # create-issue-from-file, which updates in place when given one.
+      # the open issue whose title matches TRACKER_TITLE exactly and hand its
+      # number to create-issue-from-file, which updates in place when given
+      # one. Matching the title, not just the label, keeps a human-filed
+      # issue that happens to carry `cargo-audit` from being hijacked.
       - name: Find existing audit issue
-        if: failure()
+        if: always() && steps.audit.outcome == 'failure'
         id: existing
         env:
           GH_TOKEN: ${{ github.token }}
@@ -82,9 +100,10 @@ jobs:
             --repo "${{ github.repository }}" \
             --state open \
             --label cargo-audit \
-            --limit 1 \
-            --json number \
-            --jq '.[0].number // empty')
+            --limit 50 \
+            --json number,title \
+            | jq -r --arg t "$TRACKER_TITLE" \
+              '[.[] | select(.title == $t)] | first | .number // empty')
           echo "number=$number" >> "$GITHUB_OUTPUT"
           if [ -n "$number" ]; then
             echo "Updating existing tracker #$number"
@@ -93,18 +112,20 @@ jobs:
           fi
 
       - name: Open or update issue on failure
-        if: failure()
+        if: always() && steps.audit.outcome == 'failure'
         uses: peter-evans/create-issue-from-file@v6
         with:
-          title: "Nightly cargo-audit failure"
+          title: ${{ env.TRACKER_TITLE }}
           content-filepath: ./issue-body.md
           labels: security, automated, cargo-audit
           issue-number: ${{ steps.existing.outputs.number }}
 
       # Green run + an open tracker means the advisories were dealt with;
-      # close it so the label stays a truthful signal of "audit is red".
+      # close it so an open tracker stays a truthful signal of "audit is red".
+      # Same exact-title match as the lookup above — never close an issue a
+      # human opened and merely labelled `cargo-audit`.
       - name: Close tracker when audit passes
-        if: success()
+        if: always() && steps.audit.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -112,9 +133,10 @@ jobs:
             --repo "${{ github.repository }}" \
             --state open \
             --label cargo-audit \
-            --limit 1 \
-            --json number \
-            --jq '.[0].number // empty')
+            --limit 50 \
+            --json number,title \
+            | jq -r --arg t "$TRACKER_TITLE" \
+              '[.[] | select(.title == $t)] | first | .number // empty')
           if [ -n "$number" ]; then
             gh issue close "$number" \
               --repo "${{ github.repository }}" \
