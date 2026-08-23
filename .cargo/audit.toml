@@ -39,4 +39,20 @@ ignore = [
     # RustSec offers no safe upgrade. Mirrors deny.toml; revisit when
     # lopdf moves off ttf-parser.
     "RUSTSEC-2026-0192",
+
+    # wasmtime: RUSTSEC-2026-0222, "Stores can mix up type indices between
+    # engines" (low, 3.8). Fixed only in >=46.0.2 / >=47.0.3, both of which
+    # declare rust-version 1.94.0 while rust-toolchain.toml pins 1.93.0 —
+    # taking the fix means an MSRV bump across every workflow, tracked
+    # separately. The flaw needs two live `Engine`s in one process;
+    # xiaoguai-mcp-exec-wasm holds a single process-wide `OnceLock<Engine>`
+    # (src/engine.rs `shared_engine`), so the precondition never occurs.
+    # Mirrors deny.toml. Drop when the toolchain moves to 1.94.
+    "RUSTSEC-2026-0222",
+
+    # lru: RUSTSEC-2026-0253, unsound — `LruCache::pop()` lacks panic safety.
+    # Transitive via tantivy 0.26.1 (RAG search index) only; no
+    # semver-compatible fixed release exists, so the fix has to come from
+    # tantivy. Mirrors deny.toml; revisit when tantivy bumps lru.
+    "RUSTSEC-2026-0253",
 ]

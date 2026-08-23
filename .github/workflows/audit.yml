@@ -4,6 +4,11 @@ name: Security audit (nightly)
 # This catches advisories that landed since the last PR even when nobody
 # touched the dep tree. On failure we open a GitHub issue so the on-call
 # eng wakes up to a tracked work item rather than a buried Action log.
+#
+# 2026-08: ONE rolling issue, not one per run. The title used to embed
+# ${{ github.run_id }}, so three weeks of unresolved advisories piled up
+# 22 identical issues. Failures now update the single open `cargo-audit`
+# issue, and a green run closes it.
 on:
   schedule:
     - cron: '0 8 * * *'
@@ -17,6 +22,11 @@ jobs:
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
+    env:
+      # One definition, used by the lookup, the create/update and the close.
+      # If these three ever disagree the job silently stops finding its own
+      # tracker and starts minting duplicates again.
+      TRACKER_TITLE: Nightly cargo-audit failure
     steps:
       - uses: actions/checkout@v7
 
@@ -37,10 +47,25 @@ jobs:
           cargo audit --deny warnings 2>&1 | tee audit-report.txt
 
       - name: Prepare issue body on failure
-        if: failure()
+        # Two things going on in this condition.
+        #
+        # Not plain `failure()`: that is true for ANY earlier step failing, and
+        # since these steps now overwrite one shared tracker, a flaked
+        # `cargo install cargo-audit` would replace the real advisory list with
+        # an empty report. Only a genuine audit finding should write.
+        #
+        # The leading `always()` is load-bearing: an `if:` with no status check
+        # function gets an implicit `success() &&` prepended, which is false the
+        # moment the audit step fails — the exact case this must fire on. Drop
+        # it and the job silently stops filing issues altogether.
+        if: always() && steps.audit.outcome == 'failure'
         run: |
           {
             echo "# Nightly cargo-audit failure"
+            echo ""
+            echo "_This issue is the single rolling tracker — its body is"
+            echo "overwritten by each failing nightly run, and it closes"
+            echo "automatically once the audit goes green._"
             echo ""
             echo "Workflow: ${{ github.workflow }}"
             echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -57,10 +82,63 @@ jobs:
             echo "open a downstream PR. Do not silently dismiss."
           } > issue-body.md
 
-      - name: Open issue on failure
-        if: failure()
+      # Reuse the existing tracker instead of opening a fresh issue per run.
+      # Before this, the title carried ${{ github.run_id }}, so every nightly
+      # cron minted a brand-new issue for the *same* unresolved advisories —
+      # 22 duplicates accumulated over three weeks in Aug 2026. Now we look up
+      # the open issue whose title matches TRACKER_TITLE exactly and hand its
+      # number to create-issue-from-file, which updates in place when given
+      # one. Matching the title, not just the label, keeps a human-filed
+      # issue that happens to carry `cargo-audit` from being hijacked.
+      - name: Find existing audit issue
+        if: always() && steps.audit.outcome == 'failure'
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --label cargo-audit \
+            --limit 50 \
+            --json number,title \
+            | jq -r --arg t "$TRACKER_TITLE" \
+              '[.[] | select(.title == $t)] | first | .number // empty')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          if [ -n "$number" ]; then
+            echo "Updating existing tracker #$number"
+          else
+            echo "No open tracker; a new issue will be opened"
+          fi
+
+      - name: Open or update issue on failure
+        if: always() && steps.audit.outcome == 'failure'
         uses: peter-evans/create-issue-from-file@v6
         with:
-          title: "Nightly cargo-audit failure — ${{ github.run_id }}"
+          title: ${{ env.TRACKER_TITLE }}
           content-filepath: ./issue-body.md
           labels: security, automated, cargo-audit
+          issue-number: ${{ steps.existing.outputs.number }}
+
+      # Green run + an open tracker means the advisories were dealt with;
+      # close it so an open tracker stays a truthful signal of "audit is red".
+      # Same exact-title match as the lookup above — never close an issue a
+      # human opened and merely labelled `cargo-audit`.
+      - name: Close tracker when audit passes
+        if: always() && steps.audit.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --label cargo-audit \
+            --limit 50 \
+            --json number,title \
+            | jq -r --arg t "$TRACKER_TITLE" \
+              '[.[] | select(.title == $t)] | first | .number // empty')
+          if [ -n "$number" ]; then
+            gh issue close "$number" \
+              --repo "${{ github.repository }}" \
+              --comment "Nightly cargo-audit is green again (run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). Closing automatically."
+          fi
