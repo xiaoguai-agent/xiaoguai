@@ -1,0 +1,29 @@
+name: Consistency checks
+
+# Cheap repo-invariant checks — pure grep, no build, runs in seconds. Kept out
+# of rust.yml deliberately: that workflow has a long history of runner deaths
+# under memory pressure and should not grow new responsibilities.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  toolchain:
+    name: Toolchain references agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Bumping the MSRV is a coordinated edit across ~16 places: the toolchain
+      # file, the workspace rust-version, a dozen workflow pins, two deploy
+      # Dockerfiles and four install docs. On the 1.93 -> 1.94 bump the
+      # Dockerfiles were missed on the first pass — a stale ARG RUST_VERSION
+      # does not break CI, it breaks the container build later and far from the
+      # change that caused it.
+      - run: ./scripts/check-toolchain-consistency.sh
