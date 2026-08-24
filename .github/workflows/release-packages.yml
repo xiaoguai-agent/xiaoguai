@@ -49,10 +49,25 @@ env:
   CARGO_GENERATE_RPM_VERSION: "^0.14"
 
 jobs:
+  # ── Release preflight ────────────────────────────────────────────────────
+  # Refuse to build or publish anything for a tag the changelog does not
+  # document. Runs first and costs seconds; everything downstream `needs` it.
+  # This is deliberately duplicated across all three release workflows rather
+  # than living in one: they fire independently on the same tag, and the PyPI
+  # publish is irreversible — a version number cannot be reclaimed once taken.
+  preflight:
+    name: Preflight (changelog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: CHANGELOG documents this tag
+        run: ./scripts/check-changelog.sh "${{ github.ref_name }}"
+
   # ============================================================
   # 1. Build the release binaries (shared between deb + rpm jobs)
   # ============================================================
   build:
+    needs: preflight
     name: Build release binaries (x86_64)
     runs-on: ubuntu-22.04
     permissions:

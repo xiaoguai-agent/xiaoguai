@@ -23,6 +23,20 @@ env:
   CIBW_BUILD_VERBOSITY: '1'
 
 jobs:
+  # ── Release preflight ────────────────────────────────────────────────────
+  # Refuse to build or publish anything for a tag the changelog does not
+  # document. Runs first and costs seconds; everything downstream `needs` it.
+  # This is deliberately duplicated across all three release workflows rather
+  # than living in one: they fire independently on the same tag, and the PyPI
+  # publish is irreversible — a version number cannot be reclaimed once taken.
+  preflight:
+    name: Preflight (changelog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: CHANGELOG documents this tag
+        run: ./scripts/check-changelog.sh "${{ github.ref_name }}"
+
   # ---------------------------------------------------------------------
   # Matrix: build the native Rust binary, then build a platform-tagged
   # wheel that bundles it as package data.
@@ -33,6 +47,7 @@ jobs:
   # package-data glob in pyproject.toml.
   # ---------------------------------------------------------------------
   build-wheel:
+    needs: preflight
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     strategy:
