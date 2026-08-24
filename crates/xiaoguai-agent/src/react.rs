@@ -397,7 +397,7 @@ async fn run_inner(
             &cancel,
         )
         .await;
-        for (call, tr) in turn.tool_calls.iter().zip(results.into_iter()) {
+        for (call, tr) in turn.tool_calls.iter().zip(results) {
             messages.push(tool_message_for(call, &tr));
         }
 

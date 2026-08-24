@@ -220,7 +220,7 @@ impl OutcomesReader for InMemoryOutcomesBackend {
             .filter(|r| range.since.is_none_or(|s| r.attributed_at >= s))
             .filter(|r| range.until.is_none_or(|u| r.attributed_at <= u))
             .collect();
-        filtered.sort_by(|a, b| b.attributed_at.cmp(&a.attributed_at));
+        filtered.sort_by_key(|r| std::cmp::Reverse(r.attributed_at));
         filtered.truncate(usize::try_from(limit.max(0)).unwrap_or(0));
         Ok(filtered)
     }

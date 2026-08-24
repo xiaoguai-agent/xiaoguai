@@ -17,6 +17,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **MSRV policy: a stable-minus-2 band, and rustc 1.94 → 1.95 + `wasmtime`
+  47.0.4 → 48.0.0** — the MSRV may now move freely up to `current stable − 2`;
+  within that band a dependency raising it is routine rather than an ADR-worthy
+  event. The repo had drifted four releases behind stable while re-arguing the
+  same question each time. **Building from source now requires Rust 1.95 or
+  newer**; prebuilt artifacts are unaffected. See
+  [ADR-0024](docs/architecture/adr/0024-msrv-rolling-policy.md), superseding
+  ADR-0023. wasmtime 47 → 48 needed no code changes.
+- **rustc 1.95 lint fallout** — fifteen genuine findings fixed
+  (`map(..).unwrap_or(false)` → `is_ok_and`, `sort_by` → `sort_by_key` with
+  `Reverse`, redundant `.into_iter()`, three markdown match arms collapsed into
+  guards). `clippy::duration_suboptimal_units` is suppressed rather than applied
+  to its 90 sites — most are expiry/TTL constants and test fixtures that reason
+  in seconds, and rewriting them inside a toolchain bump would bury a
+  behaviour-relevant edit in churn.
+
 ### Fixed
 - **`--all-features` builds again (#491)** — `xiaoguai-memory`'s OpenAI embedder
   had not compiled since `async-openai` 0.41 moved its entire API behind feature

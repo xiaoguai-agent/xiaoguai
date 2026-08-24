@@ -435,7 +435,7 @@ fn build_cors() -> CorsLayer {
             base.allow_origin(origins)
         }
         _ => base.allow_origin(AllowOrigin::predicate(|origin, _parts| {
-            origin.to_str().map(is_loopback_origin).unwrap_or(false)
+            origin.to_str().is_ok_and(is_loopback_origin)
         })),
     }
 }
@@ -458,8 +458,7 @@ fn is_loopback_origin(origin: &str) -> bool {
         return true;
     }
     host.parse::<std::net::IpAddr>()
-        .map(|ip| ip.is_loopback())
-        .unwrap_or(false)
+        .is_ok_and(|ip| ip.is_loopback())
 }
 
 #[cfg(test)]

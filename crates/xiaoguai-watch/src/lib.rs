@@ -57,7 +57,14 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::missing_errors_doc,
-    clippy::missing_panics_doc
+    clippy::missing_panics_doc,
+    // rustc 1.95. This crate's TTL and interval values are reasoned about in
+    // seconds throughout — `Duration::from_secs(3600)` next to a "1 hour TTL"
+    // comment reads truer than `from_hours(1)`, and the test fixtures compare
+    // against second-denominated expectations. Note the `#![warn(pedantic)]`
+    // above overrides both the workspace `[lints]` table and CI's `-A` flag,
+    // so this exception has to live here.
+    clippy::duration_suboptimal_units
 )]
 
 pub mod alert_sink;

@@ -52,14 +52,16 @@ tracing-subscriber = { workspace = true }
 # runway: ADR-0021 records that picking the more conservative line (42.0.2)
 # was immediately invalidated by fresh advisories against it.
 #
-# 48.0.0 exists but requires rustc 1.95; deliberately not taken here.
+# Taken under the stable-minus-2 MSRV band (ADR-0024): 48.0.0 needs rustc
+# 1.95, well inside the band, so this is a routine bump rather than the
+# joined toolchain decision 45->47 required.
 #
 # default-features off + explicit list keeps build time reasonable
 # (avoids compiling features we never use: wat, profiling, etc.).
 # `p1` is the preview1 WASI surface; `async` covers both the wasmtime
 # async runtime and the component-model dep we need for wasi p1.
-wasmtime = { version = "47.0.4", default-features = false, features = ["async", "cranelift", "runtime", "parallel-compilation"] }
-wasmtime-wasi = { version = "47.0.4", default-features = false, features = ["p1"] }
+wasmtime = { version = "48.0.0", default-features = false, features = ["async", "cranelift", "runtime", "parallel-compilation"] }
+wasmtime-wasi = { version = "48.0.0", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

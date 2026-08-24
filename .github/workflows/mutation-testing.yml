@@ -31,8 +31,8 @@ jobs:
         with:
           fetch-depth: 0  # full history required for --in-diff origin/main
 
-      - name: Set up Rust 1.94.0
-        uses: dtolnay/rust-toolchain@1.94.0
+      - name: Set up Rust 1.95.0
+        uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt, clippy
 

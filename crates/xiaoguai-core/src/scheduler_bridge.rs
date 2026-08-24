@@ -471,7 +471,7 @@ pub async fn spawn_file_watch_source(
     // Static routes first so they win on (job_id, path) conflict.
     let mut seen: std::collections::HashSet<(String, PathBuf)> = std::collections::HashSet::new();
     let mut registered = 0_usize;
-    for route in static_routes.into_iter().chain(db_routes.into_iter()) {
+    for route in static_routes.into_iter().chain(db_routes) {
         let key = (route.job_id.clone(), route.path.clone());
         if !seen.insert(key) {
             continue;

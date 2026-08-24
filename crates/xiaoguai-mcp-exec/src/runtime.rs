@@ -29,12 +29,10 @@ static UNISOLATED_WARNED: AtomicBool = AtomicBool::new(false);
 /// or network isolation. Behaviour is unchanged (L1 still runs); this is
 /// operator awareness, not a gate. Silenced via [`ACK_UNISOLATED_ENV`].
 fn warn_unisolated_once() {
-    let acked = std::env::var(ACK_UNISOLATED_ENV)
-        .map(|v| {
-            let v = v.trim().to_ascii_lowercase();
-            !v.is_empty() && v != "0" && v != "false"
-        })
-        .unwrap_or(false);
+    let acked = std::env::var(ACK_UNISOLATED_ENV).is_ok_and(|v| {
+        let v = v.trim().to_ascii_lowercase();
+        !v.is_empty() && v != "0" && v != "false"
+    });
     if acked || UNISOLATED_WARNED.swap(true, Ordering::Relaxed) {
         return;
     }

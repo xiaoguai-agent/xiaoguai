@@ -244,8 +244,7 @@ async fn prompt_hidden() -> Result<String> {
         && std::process::Command::new("stty")
             .arg("-echo")
             .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+            .is_ok_and(|s| s.success());
     let _guard = EchoGuard(echo_off);
 
     let read = tokio::task::spawn_blocking(|| {

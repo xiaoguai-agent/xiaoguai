@@ -642,7 +642,7 @@ impl SkillProposalRepository for InMemorySkillProposalRepository {
             .filter(|r| status.is_none_or(|s| r.status == s))
             .cloned()
             .collect();
-        out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        out.sort_by_key(|d| std::cmp::Reverse(d.created_at));
         Ok(out)
     }
 

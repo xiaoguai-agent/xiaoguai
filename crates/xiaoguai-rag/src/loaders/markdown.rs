@@ -95,17 +95,17 @@ impl Loader for MarkdownLoader {
                     }
                     heading_buf = None;
                 }
-                Event::Start(Tag::Paragraph | Tag::Item | Tag::BlockQuote(_)) => {
-                    if !text.is_empty() && !last_was_newline {
-                        text.push('\n');
-                        last_was_newline = true;
-                    }
+                Event::Start(Tag::Paragraph | Tag::Item | Tag::BlockQuote(_))
+                    if !text.is_empty() && !last_was_newline =>
+                {
+                    text.push('\n');
+                    last_was_newline = true;
                 }
-                Event::End(TagEnd::Paragraph | TagEnd::Item | TagEnd::BlockQuote(_)) => {
-                    if !text.ends_with('\n') {
-                        text.push('\n');
-                        last_was_newline = true;
-                    }
+                Event::End(TagEnd::Paragraph | TagEnd::Item | TagEnd::BlockQuote(_))
+                    if !text.ends_with('\n') =>
+                {
+                    text.push('\n');
+                    last_was_newline = true;
                 }
                 Event::Text(ref t) | Event::Code(ref t) => {
                     if let Some((_, ref mut buf)) = heading_buf {
@@ -115,11 +115,9 @@ impl Loader for MarkdownLoader {
                         last_was_newline = t.ends_with('\n');
                     }
                 }
-                Event::SoftBreak | Event::HardBreak => {
-                    if heading_buf.is_none() {
-                        text.push(' ');
-                        last_was_newline = false;
-                    }
+                Event::SoftBreak | Event::HardBreak if heading_buf.is_none() => {
+                    text.push(' ');
+                    last_was_newline = false;
                 }
                 _ => {}
             }

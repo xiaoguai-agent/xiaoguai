@@ -21,10 +21,10 @@ jobs:
       - uses: actions/checkout@v7
       # Run cargo-deny on the runner (not the action's container) so it uses the
       # repo's pinned toolchain. The EmbarkStudios/cargo-deny-action@v2 image
-      # regressed (2026-07): it can't honor `rust-toolchain.toml`'s 1.94.0 pin
-      # ("override toolchain '1.94.0' is not installed"), reddening every PR.
+      # regressed (2026-07): it can't honor `rust-toolchain.toml`'s 1.95.0 pin
+      # ("override toolchain '1.95.0' is not installed"), reddening every PR.
       # This mirrors the rust.yml idiom (dtolnay + taiki-e install-action).
-      - uses: dtolnay/rust-toolchain@1.94.0
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny

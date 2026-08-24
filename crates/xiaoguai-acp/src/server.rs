@@ -163,8 +163,7 @@ where
 /// version we don't), and advertise our identity + default capabilities.
 fn handle_initialize(incoming: &Incoming, id: Value) -> Value {
     let requested = serde_json::from_value::<InitializeRequest>(incoming.params.clone())
-        .map(|req| req.protocol_version)
-        .unwrap_or(ProtocolVersion::V1);
+        .map_or(ProtocolVersion::V1, |req| req.protocol_version);
     let negotiated = std::cmp::min(requested, ProtocolVersion::V1);
     let response = InitializeResponse::new(negotiated)
         .agent_capabilities(AgentCapabilities::new())

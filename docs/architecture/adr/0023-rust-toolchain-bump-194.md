@@ -1,7 +1,7 @@
 # ADR-0023 — Bump Rust toolchain 1.93 → 1.94 (wasmtime 45 → 47 for CVE fix)
 
 Date: 2026-08-23
-Status: Accepted
+Status: Superseded by [ADR-0024](0024-msrv-rolling-policy.md)
 Supersedes: [ADR-0021](0021-rust-toolchain-bump-193.md)
 
 ## Context
