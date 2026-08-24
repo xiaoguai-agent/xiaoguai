@@ -91,25 +91,218 @@ source now requires Rust 1.94 or newer.** Prebuilt artifacts — pip wheels,
 
 ---
 
-<!-- Entries for v1.14.0 – v1.34.4 were never written: this file went unmaintained -->
-<!-- between 2026-06-08 and 2026-08-24. For that range use the GitHub Releases     -->
-<!-- page and `git log v1.13.0..v1.34.4`. Maintained again from v1.35.0 onward.    -->
+> ## Reconstructed section
+>
+> Everything from **v1.14.0 to v1.34.4** below was written on 2026-08-24 by
+> reading `git log` between tags — **not** at release time. The GitHub Releases
+> for this range carry only auto-generated artifact-verification boilerplate, so
+> there was no contemporaneous record to recover. Entries therefore reflect what
+> the commits *say* they did, condensed; they do not carry the reasoning, the
+> rejected alternatives, or the caveats a release note written on the day would
+> have. Pure dependency churn is summarised rather than enumerated. Treat this
+> as an index into the history, not as authoritative release notes.
+>
+> Note there is no v1.33.x — the series jumps v1.32.0 → v1.34.0.
 
-## [v1.14.0] – [v1.34.4] — 2026-06-08 → 2026-08-23
+## [v1.34.4] — 2026-08-23
 
-**Not documented here.** This changelog lapsed for roughly twenty releases. The
-tags exist and the history is intact, but no entries were written at the time and
-they have not been reconstructed after the fact. Use
-[the Releases page](https://github.com/xiaoguai-agent/xiaoguai/releases) or
-`git log v1.13.0..v1.34.4` for that window.
+- `rmcp` 2.2 → 3.1, adapting to two breaking changes: `peer_info()` now returns
+  `ServerPeerInfo` with an optional identity, and `ServerHandler::call_tool`
+  returns the MRTR `CallToolResponse` enum (#489).
+- `h2` 0.4.18 and `event-listener` 5.4.2, clearing RUSTSEC-2026-0258 and -0221;
+  the nightly `cargo-audit` job reduced from one issue per run to a single
+  rolling tracker after it had produced 22 duplicates (#488).
+- Dependency groups: cargo minor/patch ×10, npm minor/patch ×4, cibuildwheel.
 
-Notable items from the tail of that range, for orientation only:
+## [v1.34.3] — 2026-07-20
 
-- **v1.34.4** — `h2` 0.4.18 / `event-listener` 5.4.2 clearing RUSTSEC-2026-0258
-  and -0221 (#488); `rmcp` 2.2 → 3.1 adapting to `ServerPeerInfo` and the MRTR
-  `CallToolResponse` enum (#489); the nightly `cargo-audit` job reduced to one
-  rolling issue instead of one per run.
-- **v1.34.2** — packaged-install boot fix for the rpm/deb systemd unit.
+- Offline / air-gapped install recipe added to the docs (#436).
+- Dependency groups: TypeScript 7, several `actions/setup-*` majors, npm and
+  cargo minor/patch.
+
+## [v1.34.2] — 2026-07-20
+
+- **Packaging fix**: the install smoke check validated `config.yaml.example`
+  rather than the `config.yaml` actually shipped, so a broken shipped config
+  passed (#435).
+
+## [v1.34.1] — 2026-07-20
+
+- **Every packaged install was unbootable** — the shipped example config could
+  not start (#434).
+- `crossbeam-epoch` 0.9.20 for RUSTSEC-2026-0204; `age` 0.10 → 0.12 which also
+  unbroke the cargo-deny gate; `ed25519-dalek` 2 → 3; `rmcp` 2.2.
+- `.cargo/audit.toml` ignores resynced with `deny.toml` to fix the nightly audit,
+  including restoring the `rsa` ignore that had been removed in error.
+- Repository history rewritten to converge on a single owner identity.
+
+## [v1.34.0] — 2026-07-05
+
+- **Expert prerequisite gate** — expert personas become selectable only once
+  their required skills and MCP servers are installed, with a per-expert setup
+  page that installs prerequisites inline and then unlocks (#397, #399).
+- **Persona `tool_allowlist` enforcement**, a turnkey VM-ops persona, and
+  read-only vmware entries (#394).
+- **VC ops assistant** — persona + MCP injection foundation, the vmware MCP
+  family, plus governance and security fixes (#388).
+- `rmcp` 1.8 → 2.1 (superseding the dependabot PR); chat-ui polish.
+
+## [v1.32.0] — 2026-06-29
+
+- **Coding local executor** — sandboxed `run_code` and working-dir–scoped
+  `run_command` (#19), plus `/loop` discoverability (#8).
+- Governed coding tools gain a per-session `working_dir` (#15).
+
+## [v1.31.0] — 2026-06-29
+
+- **Cherry Studio UI rebuild** — new IA shell, model bar, message toolbar, admin
+  re-skin, en/zh only (#18, #378).
+- Keyless providers that require a key are excluded from routing candidacy (#17).
+
+## [v1.30.0] — 2026-06-29
+
+- Demo-prep batch: white-labelling, cockpit features, demo-seed and MiniMax
+  fixes (#376).
+
+## [v1.29.1] — 2026-06-28
+
+- `demo-seed` scheduled-job `retry_policy` field names corrected (#375).
+
+## [v1.29.0] — 2026-06-28
+
+- **macOS floating-window chat MVP** — a Tauri v2 thin client (#374).
+- **Demo readiness** — `demo-seed`, consult/execute tools, Loops and Anomaly
+  panes, runbook (#372).
+- **Single-owner UX** — personal activity history, AiDisclosure banner removed,
+  and the residual multi-tenant surface stripped from the UI and wire types
+  (#370, #371).
+- Feishu integration runbook and API-sink route test (#373).
+
+## [v1.28.0] — 2026-06-26
+
+- **Skill-pack Phase 4/5** — pack `agents[]` parsed and mapped to
+  personas/teams, activated on `serve` boot, surfaced in chat and onboarding,
+  and hot-activatable via `POST /v1/admin/skills/rescan` (#360, #361, #363,
+  #366).
+- A canonical runnable agent-team pack (#365).
+
+## [v1.27.0] — 2026-06-25
+
+- **Bilingual skills catalog** with general/specialized tiers, plus provider
+  list polish (#355).
+- Three unterminated CSS rules closed in chat-ui (#356).
+
+## [v1.26.0] — 2026-06-24
+
+- **Skill-pack Phase 2** — pack anomaly and watch specs actually run, with sink
+  routing, watch over HTTP, and corpus disposition (#352, #353).
+- Adapted to `rmcp` 1.8, where `peer_info()` began returning an owned
+  `ServerInfo` (#354).
+- RUSTSEC-2026-0185 (quinn-proto) and -0186 (memmap2) cleared (#350).
+
+## [v1.25.0] — 2026-06-23
+
+- `pack validate` gains model source/output adapters and warns on missing files
+  (#344).
+- Adapted to `agent-client-protocol-schema` 0.14.0 (#345).
+
+## [v1.24.0] — 2026-06-21
+
+- **`xiaoguai pack validate`** — the skill-pack manifest validator, loader
+  Phase 1 (#336), extended to accept the `ref` path idiom and to batch a whole
+  directory (#338).
+
+## [v1.23.0] — 2026-06-21
+
+- Anomaly back-test endpoints `POST /v1/anomaly/test` and `/run` (#333).
+- Stale "Pg bridge v1.3" 503 messages replaced with honest text (#335).
+
+## [v1.22.3] — 2026-06-20
+
+- **Release workflows serialized** to fix the GitHub Release attach race, where
+  the tarball and deb/rpm workflows both created a release for the same tag and
+  one lost, stranding assets in a draft (#330).
+- Archived persona names reusable again (migration 0039) (#331).
+
+## [v1.22.2] — 2026-06-20
+
+- **Incident self-healing admin pane** (DEC-040) (#323).
+- **DEC-041 consolidation refactor** across five phases: canonical `ApiError`,
+  shared admin-ui async/error primitives, a centralised best-effort audit-append
+  helper, `xiaoguai-im-common` dedup, and clap arg definitions extracted to a
+  `cli_args` module (#324, #325, #327, #328, #329).
+- `wasmtime` 45.0.2 clearing RUSTSEC-2026-0182 (#318).
+
+## [v1.22.1] — 2026-06-16
+
+- **Provider connectivity probe** with a verified-only model picker — the fix
+  for MiniMax "401"s that were really model-routing failures (#317).
+
+## [v1.22.0] — 2026-06-15
+
+- chat-ui UX pass, provider editing on the web, a Skills marketplace, and
+  explanatory copy on each pane (#315).
+
+## [v1.21.0] — 2026-06-15
+
+- admin-ui and CLI usability fixes: global language, back links, HotL editing,
+  CLI auth, Outcomes list, SkillPacks (#312).
+
+## [v1.20.0] — 2026-06-14
+
+- CLI `remote orchestrate`, agent-team workflow docs, red/green diff backgrounds,
+  tool-output display, and a LAN hint in the serve banner (#310, #311).
+
+## [v1.19.0] — 2026-06-14
+
+- CLI overhaul: `repl` renamed to `cli`/`start` with an ASCII banner, global
+  config and `/config`, a customisable prompt, persisted language, ANSI colours
+  respecting `NO_COLOR` and non-tty, and `serve --host/--port` (#305–#309).
+- chat-ui sidebar brand logo (#308).
+
+## [v1.18.0] — 2026-06-14
+
+- REPL slash-commands, plaintext/confirm handling for the init key, MiniMax
+  M2.1 and M3, and an init-time region picker (#302, #303).
+- Chinese README added (#301).
+
+## [v1.17.0] — 2026-06-14
+
+- `xiaoguai chat` defaults to the local server, and `remote --server` defaults to
+  `:7600` (#299).
+
+## [v1.16.0] — 2026-06-13
+
+- **`llm_providers.api_key` encrypted at rest** (SEC-08) (#298).
+- Archived team-name reuse fixed and webhook tokens hashed at rest (SEC-19)
+  (#295).
+- vmware-ops pack — a VMware infrastructure agent team consuming the
+  vmware-skill MCP (#293).
+
+## [v1.15.0] — 2026-06-10
+
+- **Security audit remediation — all 26 findings (SEC-01…26)** (#281).
+- Capability batch T4–T8: executive orchestration with parallel team runs and
+  synthesis, the consult/execute split plus Agent Bridge, event-driven
+  self-healing (incidents, consult Analyst, approved Executor), memory with team
+  glossary and import/export, and install-and-go polish — banners, `doctor`,
+  service install (#274, #275, #277, #278, #279).
+- Node-scope cleanup: fleet-scope Kanban dropped, Memory pane contract fixed
+  (#282).
+
+## [v1.14.0] — 2026-06-10
+
+- **Relicensed from BUSL-1.1 to Apache-2.0** (#264).
+- **`/loop` shipped end to end** — session-scoped recurring agent turns
+  (DEC-039), `loop_done`/`loop_pause` built-in tools, parked-tick visibility via
+  `GET /v1/hotl/pending`, session-attributed token usage, dynamic pacing with a
+  `max_total_tokens` budget, a chat slash-command parser, and operator resume for
+  paused loops (#244, #246, #253–#256, #259).
+- **T3 expert center** — teams, expert picker, deterministic suggest (#271).
+- **e2e suite brought green** — seven root causes including two real production
+  bugs; stale Playwright specs rewritten for the single-owner product (#257,
+  #260).
+- Token usage attributed on the IM, ACP and scheduler paths (#261).
 
 ---
 
