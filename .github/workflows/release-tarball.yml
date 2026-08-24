@@ -41,7 +41,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # ── Release preflight ────────────────────────────────────────────────────
+  # Refuse to build or publish anything for a tag the changelog does not
+  # document. Runs first and costs seconds; everything downstream `needs` it.
+  # This is deliberately duplicated across all three release workflows rather
+  # than living in one: they fire independently on the same tag, and the PyPI
+  # publish is irreversible — a version number cannot be reclaimed once taken.
+  preflight:
+    name: Preflight (changelog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: CHANGELOG documents this tag
+        run: ./scripts/check-changelog.sh "${{ github.ref_name }}"
+
   build:
+    needs: preflight
     name: Build tarball (${{ matrix.target }})
     runs-on: ubuntu-latest
     strategy:
@@ -307,9 +322,27 @@ jobs:
           sha256sum xiaoguai-*.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
+      # The release body was verification boilerplate only — byte-identical on
+      # v1.34.0 / .3 / .4 — so the Releases page said nothing about what
+      # actually changed. Pull the section the preflight already validated.
+      - name: Build release notes from CHANGELOG
+        run: |
+          TAG="${{ github.ref_name }}"
+          {
+            ./scripts/check-changelog.sh --body "$TAG"
+            echo ""
+            echo "---"
+            echo ""
+            # __TAG__ stands in for the tag: the file is read with `cat`, not
+            # embedded in YAML, so `${{ }}` would not be interpolated here.
+            sed "s/__TAG__/${TAG}/g" .github/release-body-verification.md
+          } > release-notes.md
+          echo "--- rendered notes ---"; head -30 release-notes.md
+
       - name: Attach to release
         uses: softprops/action-gh-release@v3
         with:
+          body_path: release-notes.md
           files: |
             dist/xiaoguai-*.tar.gz
             dist/xiaoguai-*.tar.gz.sig
@@ -317,40 +350,3 @@ jobs:
             dist/xiaoguai-*.tar.gz.bundle
             dist/SHA256SUMS
           fail_on_unmatched_files: true
-          body: |
-            ## Verifying release artifacts
-
-            ### cosign (keyless / Sigstore)
-
-            ```sh
-            # Download the tarball + certificate + signature
-            VERSION="${{ github.ref_name }}"
-            ARCH=x86_64-unknown-linux-gnu   # or aarch64-unknown-linux-gnu
-            # Filenames keep the tag's leading 'v' (build-tarball.sh: xiaoguai-v${VERSION}-...)
-            BASE="xiaoguai-${VERSION}-${ARCH}"
-
-            cosign verify-blob \
-              --certificate  "${BASE}.tar.gz.pem" \
-              --signature    "${BASE}.tar.gz.sig" \
-              --certificate-identity-regexp \
-                'https://github.com/xiaoguai-agent/xiaoguai/.github/workflows/release-tarball.yml@.*' \
-              --certificate-oidc-issuer \
-                'https://token.actions.githubusercontent.com' \
-              "${BASE}.tar.gz"
-            ```
-
-            A `VERIFIED OK` message confirms the tarball was built by this workflow
-            and has not been modified since signing.
-
-            ### SLSA Level 3 provenance
-
-            ```sh
-            # The attestation is attached as multiple.intoto.jsonl
-            slsa-verifier verify-artifact "${BASE}.tar.gz" \
-              --provenance-path multiple.intoto.jsonl \
-              --source-uri github.com/xiaoguai-agent/xiaoguai \
-              --source-tag "${{ github.ref_name }}"
-            ```
-
-            See [docs/runbooks/release-signing.md](https://github.com/xiaoguai-agent/xiaoguai/blob/main/docs/runbooks/release-signing.md)
-            for full installation instructions and trust-root details.
