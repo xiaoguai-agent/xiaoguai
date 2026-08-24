@@ -30,7 +30,7 @@ curl -X POST http://localhost:7600/v1/sessions \
   -d '{"user_id":"usr_dev","model":"mock"}'
 ```
 
-From a checkout with a Rust toolchain, `cargo run -p xiaoguai-cli -- serve`
+From a checkout with Rust 1.94+, `cargo run -p xiaoguai-cli -- serve`
 does the same. Pre-built `.deb`/`.rpm`/tarball installs add the bundled web UI —
 see the repo-root README's Quickstart. A no-network one-shot, no server needed:
 

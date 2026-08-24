@@ -36,8 +36,8 @@ The CI matrix produces wheels for:
 | `x86_64-unknown-linux-gnu`     | `manylinux_2_28_x86_64`       |
 | `aarch64-unknown-linux-gnu`    | `manylinux_2_28_aarch64`      |
 
-Other platforms (Alpine / musl, Windows, FreeBSD) are out of scope
-for v1.1.7. Build from source instead:
+Other platforms (Alpine / musl, Windows, FreeBSD) are out of scope.
+Build from source instead (needs Rust 1.94 or newer):
 
 ```bash
 cargo install --path crates/xiaoguai-cli

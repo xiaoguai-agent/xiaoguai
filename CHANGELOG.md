@@ -15,6 +15,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v1.35.0] — 2026-08-24
+
+Security and toolchain maintenance. One user-visible change: **building from
+source now requires Rust 1.94 or newer.** Prebuilt artifacts — pip wheels,
+.deb/.rpm, tarballs, Docker — are unaffected.
+
+### Changed
+- **Toolchain rustc 1.93 → 1.94 + `wasmtime` 45.0.3 → 47.0.4 (#494)** — closes
+  [RUSTSEC-2026-0222](https://rustsec.org/advisories/RUSTSEC-2026-0222) ("Stores
+  can mix up type indices between engines", low/3.8) in the L3 WASM sandbox,
+  replacing the temporary `deny.toml` ignore that had been carrying it. The two
+  had to move together: every version that fixes the advisory declares
+  `rust-version = 1.94.0`. Note that 47.0.0–47.0.2 are *not* fixed — dependabot's
+  PRs targeting 47.0.2 (#452, #450) were closed for that reason as well as for
+  failing to build. `winch-codegen` leaves the dependency tree. See
+  [ADR-0023](docs/architecture/adr/0023-rust-toolchain-bump-194.md), which
+  supersedes ADR-0021. Closes [#490](https://github.com/xiaoguai-agent/xiaoguai/issues/490).
+- **Install docs now state the minimum Rust version** — `README.md`,
+  `deploy/README.md`, `docs/user-guide/quickstart.md` and the PyPI project page
+  (`python/xiaoguai/README.md`), which also loses a stale "out of scope for
+  v1.1.7" line.
+
+### Fixed
+- **`frontend/pnpm-lock.yaml` repaired (#495)** — the Playwright and k6 jobs had
+  been failing at "Start docker-compose stack" with
+  `ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY`. #445 (jest-dom 6 → 7) and #456 (jsdom
+  29 → 30) each regenerated the lockfile against a base without the other and
+  were green individually; merged back-to-back, git textually auto-merged two
+  lockfiles pnpm never produced together, leaving four references to a
+  `vitest@…(jsdom@29.1.1)` key that no longer existed. pnpm cannot self-heal
+  this — `--lockfile-only`, `--fix-lockfile` and `--force` all skip re-resolution
+  because the importers' *specifiers* still match `package.json`.
+
+### Security
+- Removed two now-unnecessary advisory ignores from `deny.toml` /
+  `.cargo/audit.toml`: `RUSTSEC-2026-0222` (fixed above) and `RUSTSEC-2025-0134`
+  (rustls-pemfile, which left `Cargo.lock` entirely when tonic/qdrant-client were
+  bumped in #482). A stale ignore is a standing security claim that rots — this
+  same entry had already outlived its "dev-only via testcontainers" rationale
+  once.
+
+### Dependencies
+- cargo minor/patch group, 10 updates (#482); `base64` 0.22.1 → 0.23.1 (#449),
+  which also collapses a duplicate `base64` in the tree.
+- npm minor/patch group, 7 updates (#493); `jsdom` 29 → 30 (#456);
+  `@testing-library/jest-dom` 6 → 7 (#445).
+- `pypa/cibuildwheel` in the actions group (#467).
+
+---
+
+<!-- Entries for v1.14.0 – v1.34.4 were never written: this file went unmaintained -->
+<!-- between 2026-06-08 and 2026-08-24. For that range use the GitHub Releases     -->
+<!-- page and `git log v1.13.0..v1.34.4`. Maintained again from v1.35.0 onward.    -->
+
+## [v1.14.0] – [v1.34.4] — 2026-06-08 → 2026-08-23
+
+**Not documented here.** This changelog lapsed for roughly twenty releases. The
+tags exist and the history is intact, but no entries were written at the time and
+they have not been reconstructed after the fact. Use
+[the Releases page](https://github.com/xiaoguai-agent/xiaoguai/releases) or
+`git log v1.13.0..v1.34.4` for that window.
+
+Notable items from the tail of that range, for orientation only:
+
+- **v1.34.4** — `h2` 0.4.18 / `event-listener` 5.4.2 clearing RUSTSEC-2026-0258
+  and -0221 (#488); `rmcp` 2.2 → 3.1 adapting to `ServerPeerInfo` and the MRTR
+  `CallToolResponse` enum (#489); the nightly `cargo-audit` job reduced to one
+  rolling issue instead of one per run.
+- **v1.34.2** — packaged-install boot fix for the rpm/deb systemd unit.
+
+---
+
 ## [v1.13.0] — 2026-06-08
 
 The "do everything" batch: the scheduler finally gets a user surface, the HotL
