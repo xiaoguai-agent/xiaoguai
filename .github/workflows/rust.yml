@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Required by the merge queue: GitHub builds each queued PR on a temporary
+  # `gh-readonly-queue/...` branch and fires `merge_group`, NOT `pull_request`.
+  # Without this trigger a required check never runs in the queue and every
+  # merge hangs forever waiting for a status that cannot arrive.
+  merge_group:
 
 # Cancel superseded PR runs (an update-branch push otherwise leaves the old
 # run going — it occupies a runner for up to ~75 min and its failure confuses
