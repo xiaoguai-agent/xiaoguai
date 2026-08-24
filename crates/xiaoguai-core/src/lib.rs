@@ -170,8 +170,6 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     use xiaoguai_audit::chain::sink::SqliteAuditSink;
     use xiaoguai_llm::{build_router, LlmBackend, MockBackend, OsEnvResolver};
     use xiaoguai_mcp::McpSupervisor;
-    #[cfg(feature = "observability")]
-    use xiaoguai_observability;
     use xiaoguai_storage::repositories::{
         LlmProviderRepository, SqliteLlmProviderRepository, SqliteMcpServerRepository,
         SqliteMessageRepository, SqliteSessionRepository, SqliteSettingsRepository,

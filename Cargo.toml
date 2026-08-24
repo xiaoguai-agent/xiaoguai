@@ -150,7 +150,10 @@ chrono = { version = "0.4", features = ["serde"] }
 url = { version = "2.5", features = ["serde"] }
 
 # llm clients
-async-openai = "0.41"
+# 0.41 split the API behind feature gates and `default = ["rustls"]` turns on
+# TLS only — without "embedding" the Client / config / embeddings surface is
+# not compiled at all, which is what silently broke `--features openai`.
+async-openai = { version = "0.41", features = ["embedding"] }
 eventsource-stream = "0.2"
 
 # mcp
