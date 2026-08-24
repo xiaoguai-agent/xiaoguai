@@ -1,0 +1,130 @@
+name: All-features check (nightly)
+
+# 2026-08-24 (#491): nothing in CI ever compiled with `--all-features`, so
+# optional code paths rotted unnoticed. `xiaoguai-memory`'s OpenAI embedder
+# had been broken since async-openai 0.41 moved its API behind feature gates,
+# and `xiaoguai-core` carried a redundant import under `observability` — both
+# invisible to every gate. `deny.yml` does pass `--all-features`, but only to
+# cargo-deny, which resolves the dependency graph and never invokes rustc.
+#
+# Deliberately NIGHTLY, not a PR gate. This repo has a documented history of
+# runners dying under memory/disk pressure on full workspace builds, and an
+# extra all-features compile on every PR is exactly the kind of load that
+# caused it. `cargo check` + clippy, never `--all-targets` test binaries:
+# type-checking is what catches feature rot; linking test executables is what
+# kills runners.
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+  # Run on PRs that touch feature wiring, where breakage is most likely and
+  # the author can fix it immediately instead of finding an issue next morning.
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/all-features.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  TRACKER_TITLE: Nightly all-features check failure
+
+jobs:
+  check:
+    name: cargo check --all-features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # rust.yml's own note: the cold full-workspace build OOMs the runner
+      # disk. Same precaution here.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+          df -h /
+
+      - name: cargo check --workspace --all-features
+        id: check
+        run: cargo check --workspace --all-features --locked
+
+      - name: cargo clippy --workspace --all-features
+        id: clippy
+        run: cargo clippy --workspace --all-features --locked -- -D warnings
+
+      # Same single-rolling-issue pattern as audit.yml — see the comments there
+      # for why `always() &&` is load-bearing and why the title match matters.
+      - name: Prepare issue body on failure
+        if: always() && (steps.check.outcome == 'failure' || steps.clippy.outcome == 'failure')
+        run: |
+          {
+            echo "# Nightly all-features check failure"
+            echo ""
+            echo "_Single rolling tracker — body overwritten by each failing run,"
+            echo "closed automatically once the check goes green._"
+            echo ""
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "\`cargo check\` or \`clippy\` failed with \`--all-features\`."
+            echo "Some optional code path no longer compiles. This does NOT"
+            echo "break the default build, which is why the normal gate stays"
+            echo "green — see #491 for the class of bug this exists to catch."
+          } > issue-body.md
+
+      - name: Find existing tracker
+        if: always() && (steps.check.outcome == 'failure' || steps.clippy.outcome == 'failure')
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --label all-features \
+            --limit 50 \
+            --json number,title \
+            | jq -r --arg t "$TRACKER_TITLE" \
+              '[.[] | select(.title == $t)] | first | .number // empty')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update issue
+        # Only from the scheduled run: on a PR the author sees the red check
+        # directly and an issue would just be noise.
+        if: always() && github.event_name == 'schedule' && (steps.check.outcome == 'failure' || steps.clippy.outcome == 'failure')
+        uses: peter-evans/create-issue-from-file@v6
+        with:
+          title: ${{ env.TRACKER_TITLE }}
+          content-filepath: ./issue-body.md
+          labels: automated, all-features
+          issue-number: ${{ steps.existing.outputs.number }}
+
+      - name: Close tracker when green
+        if: always() && github.event_name == 'schedule' && steps.check.outcome == 'success' && steps.clippy.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --label all-features \
+            --limit 50 \
+            --json number,title \
+            | jq -r --arg t "$TRACKER_TITLE" \
+              '[.[] | select(.title == $t)] | first | .number // empty')
+          if [ -n "$number" ]; then
+            gh issue close "$number" \
+              --repo "${{ github.repository }}" \
+              --comment "All-features check is green again (run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). Closing automatically."
+          fi

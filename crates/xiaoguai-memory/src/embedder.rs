@@ -142,7 +142,9 @@ impl OpenAIEmbedder {
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbedder {
     async fn embed(&self, text: &str) -> MemoryResult<Vec<f32>> {
-        use async_openai::types::{CreateEmbeddingRequestArgs, EmbeddingInput};
+        use async_openai::types::embeddings::{CreateEmbeddingRequestArgs, EmbeddingInput};
+
+        use crate::error::MemoryError;
 
         let req = CreateEmbeddingRequestArgs::default()
             .model(&self.model)
@@ -157,10 +159,12 @@ impl EmbeddingProvider for OpenAIEmbedder {
             .await
             .map_err(|e| MemoryError::Embedding(e.to_string()))?;
 
+        // `Embedding::embedding` is already Vec<f32> in async-openai 0.41 — the
+        // element-wise cast this used to do was for the old Vec<f64> shape.
         resp.data
             .into_iter()
             .next()
-            .map(|e| e.embedding.into_iter().map(|x| x as f32).collect())
+            .map(|e| e.embedding)
             .ok_or_else(|| MemoryError::Embedding("empty embedding response".into()))
     }
 
@@ -390,6 +394,8 @@ pub struct LocalEmbedder {
 #[async_trait]
 impl EmbeddingProvider for LocalEmbedder {
     async fn embed(&self, _text: &str) -> MemoryResult<Vec<f32>> {
+        use crate::error::MemoryError;
+
         Err(MemoryError::Embedding(
             "LocalEmbedder: ONNX runtime not yet wired; use InMemoryEmbedder for tests or OpenAIEmbedder for production".into(),
         ))

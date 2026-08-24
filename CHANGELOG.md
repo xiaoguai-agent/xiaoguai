@@ -15,6 +15,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **`--all-features` builds again (#491)** — `xiaoguai-memory`'s OpenAI embedder
+  had not compiled since `async-openai` 0.41 moved its entire API behind feature
+  gates (`default = ["rustls"]` enables TLS only), so `Client`, `config` and the
+  embedding types were simply never built. The dependency now enables
+  `embedding`, and the types moved to `async_openai::types::embeddings::*`. Also
+  imports `MemoryError` in the `openai` and `local` paths, which referenced it
+  without one, and drops an element-wise `as f32` cast that is redundant now
+  that `Embedding::embedding` is `Vec<f32>` rather than `Vec<f64>`.
+- **`xiaoguai-core` redundant import under `observability`** — a bare
+  `use xiaoguai_observability;` that is a no-op in edition 2018+ (the call site
+  uses the full path) and tripped `-D warnings` once the crate compiled at all.
+
+### Added
+- **Nightly `--all-features` check** — no workflow had ever invoked rustc with
+  `--all-features`, which is why both bugs above sat latent; `deny.yml` passes
+  the flag only to cargo-deny, which resolves the dependency graph without
+  compiling. Runs nightly and on PRs touching `Cargo.toml` / `Cargo.lock`,
+  deliberately **not** on every PR: this repo has a documented history of
+  runners dying under memory pressure on full workspace builds. `check` +
+  `clippy` only, never `--all-targets`.
+
+---
+
 ## [v1.35.0] — 2026-08-24
 
 Security and toolchain maintenance. One user-visible change: **building from
