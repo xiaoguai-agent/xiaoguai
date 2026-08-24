@@ -49,7 +49,7 @@ the built-in self-check `xiaoguai doctor`; keep it running across reboots with
 |---|---|---|---|
 | **A. pip / pipx** | no | ✗ — API + CLI only | quickest start; scripting; servers you drive by CLI/API |
 | **B. .deb / .rpm / tarball** | root (systemd) | ✓ chat at `/`, admin at `/admin/` | a managed host that should serve the browser UI |
-| **C. from source** | Rust toolchain | ✗ — API + CLI only | development / custom builds |
+| **C. from source** | Rust 1.94+ | ✗ — API + CLI only | development / custom builds |
 | **D. Docker** | Docker | ✓ | the full stack in one command |
 
 > **No web page at `http://localhost:7600/`?** That's *expected* on **pip** and
@@ -104,7 +104,7 @@ including the MiniMax China / international region picker), and starts `:7600`
 with the browser console. Pin a release with `XIAOGUAI_VERSION=vX.Y.Z`; answer
 the LAN prompt to bind `0.0.0.0` (it collects owner credentials per SEC-01).
 
-### Option C — from source (needs a Rust toolchain)
+### Option C — from source (needs Rust 1.94 or newer)
 
 ```bash
 git clone https://github.com/xiaoguai-agent/xiaoguai.git
