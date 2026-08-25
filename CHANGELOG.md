@@ -17,6 +17,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Guard: every required status check must be able to report inside the merge
+  queue** — the queue builds each entry on a temporary branch and fires
+  `merge_group`, not `pull_request`, so a required check whose workflow does not
+  listen for it can never report: the entry waits out the 90-minute timeout and
+  every later merge queues behind it. #501 added the triggers just before the
+  queue was enabled; this stops a fourth required check from being added without
+  one. Reads the required checks from the branch ruleset so it cannot drift from
+  the actual configuration.
+
 ### Fixed
 - **`FileWatchSettings` had two disagreeing defaults** — `#[derive(Default)]`
   produced `load_routes_from_db = false` while the struct's

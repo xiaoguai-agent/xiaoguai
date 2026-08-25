@@ -27,3 +27,19 @@ jobs:
       # does not break CI, it breaks the container build later and far from the
       # change that caused it.
       - run: ./scripts/check-toolchain-consistency.sh
+
+  merge-queue:
+    name: Required checks can report in the queue
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The merge queue builds each entry on a temporary branch and fires
+      # `merge_group`, not `pull_request`. A required check whose workflow does
+      # not listen for it can never report, so the entry waits out the 90-minute
+      # timeout and every later merge is stuck behind it. #501 added the
+      # triggers just before the queue was switched on; this keeps a fourth
+      # required check from being added without one.
+      - name: Every required check has a merge_group trigger
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check-merge-queue-triggers.sh
