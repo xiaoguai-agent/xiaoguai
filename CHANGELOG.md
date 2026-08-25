@@ -17,6 +17,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **`FileWatchSettings` had two disagreeing defaults** — `#[derive(Default)]`
+  produced `load_routes_from_db = false` while the struct's
+  `#[serde(default = ...)]` and its own doc comment both said `true`. Both paths
+  are reachable: omitting `file_watch:` (or writing it null) resolves through
+  `Default`, while `file_watch: {}` resolves through serde. Observable when an
+  operator omits the block and flips
+  `XIAOGUAI_SCHEDULER__FILE_WATCH__ENABLED=true` — the same
+  env-override-into-an-absent-block shape that broke the v1.34.0 rpm installs.
+  `Default` is now hand-written to match, with a regression test that fails if a
+  derive is put back. Reported during the v1.34.2 packaging work and left unfixed
+  at the time.
+
 ### Changed
 - **MSRV policy: a stable-minus-2 band, and rustc 1.94 → 1.95 + `wasmtime`
   47.0.4 → 48.0.0** — the MSRV may now move freely up to `current stable − 2`;

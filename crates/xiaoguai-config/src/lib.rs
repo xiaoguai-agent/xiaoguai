@@ -306,7 +306,16 @@ impl Default for SchedulerSettings {
 }
 
 /// v0.12.2: file-watch source configuration block.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// `Default` is written out rather than derived: `#[derive(Default)]` would
+/// give `load_routes_from_db = false`, contradicting both this struct's
+/// `#[serde(default = ...)]` and its own doc comment. The two paths are
+/// genuinely reachable and used to disagree — `file_watch:` omitted entirely
+/// (or present-but-null) goes through `Default` via the parent's
+/// `null_as_default`, while `file_watch: {}` goes through serde's per-field
+/// defaults. Keep this impl in lock-step with the `#[serde(default...)]`
+/// attributes below; a derive here silently re-introduces the split.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileWatchSettings {
     /// When `true`, `xiaoguai-core` instantiates a `FileWatchSource`,
     /// registers every [`FileWatchRoute`] below, optionally scans the
@@ -334,6 +343,16 @@ pub struct FileWatchSettings {
 
 const fn default_load_routes_from_db() -> bool {
     true
+}
+
+impl Default for FileWatchSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            routes: Vec::new(),
+            load_routes_from_db: default_load_routes_from_db(),
+        }
+    }
 }
 
 /// One static `(job_id, path)` binding for the file-watch source.
@@ -750,6 +769,40 @@ mod tests {
     /// which serde rejects with "invalid type: unit value, expected struct".
     /// That is precisely how `scheduler.sinks` bricked v1.34.0 rpm installs.
     /// Every optional block must degrade to its defaults instead.
+    /// `FileWatchSettings::default()` must agree with the struct's
+    /// `#[serde(default = ...)]` attributes.
+    ///
+    /// Both paths are reachable and used to disagree: omitting `file_watch:`
+    /// entirely (or writing it as null) resolves through `Default` via the
+    /// parent's `null_as_default`, while `file_watch: {}` resolves through
+    /// serde's per-field defaults. A derived `Default` gave
+    /// `load_routes_from_db = false` there while serde gave `true` — and the
+    /// doc comment claimed `true`. Observable whenever an operator omits the
+    /// block and flips `XIAOGUAI_SCHEDULER__FILE_WATCH__ENABLED=true`, which
+    /// is exactly the env-override-into-an-absent-block shape that broke the
+    /// v1.34.0 rpm installs.
+    #[test]
+    fn file_watch_default_matches_serde_defaults() {
+        let from_default = FileWatchSettings::default();
+        let from_serde: FileWatchSettings =
+            serde_yaml::from_str("{}").expect("empty map deserializes");
+
+        assert_eq!(
+            from_default.load_routes_from_db, from_serde.load_routes_from_db,
+            "Default and serde disagree on load_routes_from_db — a derive(Default) \
+             would re-introduce this split"
+        );
+        assert_eq!(from_default.enabled, from_serde.enabled);
+        assert_eq!(from_default.routes.len(), from_serde.routes.len());
+
+        // Pin the documented value too, so a future change has to update the
+        // doc comment deliberately rather than drift away from it.
+        assert!(
+            from_default.load_routes_from_db,
+            "doc comment says load_routes_from_db defaults to true"
+        );
+    }
+
     #[test]
     fn empty_nested_blocks_fall_back_to_defaults() {
         let _env = env_guard();
