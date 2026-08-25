@@ -43,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@1.94.0
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy
 
@@ -62,7 +62,13 @@ jobs:
 
       - name: cargo clippy --workspace --all-features
         id: clippy
-        run: cargo clippy --workspace --all-features --locked -- -D warnings
+          # -A duration_suboptimal_units: new in rustc 1.95, fires 90 times across
+          # the workspace — HotL expiry constants, dedup TTLs, breaker windows,
+          # and a great many test fixtures that reason in seconds. Rewriting all
+          # of them belongs in its own change, not bundled into a toolchain bump
+          # where a mistyped expiry constant would be a real behaviour bug.
+          # Tracked separately; drop this flag when that lands.
+        run: cargo clippy --workspace --all-features --locked -- -D warnings -A clippy::duration_suboptimal_units
 
       # Same single-rolling-issue pattern as audit.yml — see the comments there
       # for why `always() &&` is load-bearing and why the title match matters.

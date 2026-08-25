@@ -138,6 +138,5 @@ pub(crate) async fn run_z(
 pub(crate) async fn is_repo(dir: &Path) -> bool {
     run(dir, &["rev-parse", "--is-inside-work-tree"], None)
         .await
-        .map(|s| s.trim() == "true")
-        .unwrap_or(false)
+        .is_ok_and(|s| s.trim() == "true")
 }

@@ -25,7 +25,7 @@ Linux x86_64/aarch64). API + CLI; for the bundled web UI use a package or Docker
 > the system Python is blocked. Use **pipx** instead:
 > `sudo apt install -y pipx && pipx ensurepath && pipx install xiaoguai`.
 
-**From source** (needs Rust 1.94 or newer — `cargo` is enough):
+**From source** (needs Rust 1.95 or newer — `cargo` is enough):
 
 ```bash
 git clone https://github.com/xiaoguai-agent/xiaoguai.git
@@ -70,7 +70,7 @@ xiaoguai doctor
 
 ## 3. Send your first chat
 
-Using the bundled CLI (requires a local Rust 1.94+ toolchain — `cargo` is
+Using the bundled CLI (requires a local Rust 1.95+ toolchain — `cargo` is
 enough):
 
 ```bash

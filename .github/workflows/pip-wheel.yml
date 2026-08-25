@@ -90,7 +90,7 @@ jobs:
           echo "XIAOGUAI_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Resolved XIAOGUAI_VERSION=$VERSION"
 
-      - uses: dtolnay/rust-toolchain@1.94.0
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: ${{ matrix.target }}
 

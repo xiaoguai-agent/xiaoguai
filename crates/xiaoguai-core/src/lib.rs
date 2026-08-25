@@ -233,8 +233,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // stack can't produce a real reply — set XIAOGUAI_LLM__MOCK=true to get a
     // deterministic one. NEVER set in production.
     let force_mock = std::env::var("XIAOGUAI_LLM__MOCK")
-        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        .unwrap_or(false);
+        .is_ok_and(|v| v.eq_ignore_ascii_case("true") || v == "1");
     let (backend, default_model): (Arc<dyn LlmBackend>, String) = if rows.is_empty() || force_mock {
         if force_mock {
             tracing::warn!(
@@ -880,8 +879,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
         // — only flip in deployments that *want* external agents to
         // call into us.
         mcp_publish_enabled: std::env::var("XIAOGUAI_MCP__PUBLISH")
-            .map(|s| matches!(s.as_str(), "1" | "true" | "yes"))
-            .unwrap_or(false),
+            .is_ok_and(|s| matches!(s.as_str(), "1" | "true" | "yes")),
         // v0.9.4.1: live supervisor so marketplace installs spawn the
         // new server immediately.
         mcp_supervisor: Some(Arc::new(McpSupervisor::new())),
@@ -1469,11 +1467,7 @@ fn build_wecom_gateway(
         .ok()
         .and_then(|s| s.parse::<i64>().ok());
 
-    if std::env::var("XIAOGUAI_IM_WECOM__AES_KEY")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .is_some()
-    {
+    if std::env::var("XIAOGUAI_IM_WECOM__AES_KEY").is_ok_and(|s| !s.is_empty()) {
         tracing::warn!(
             "serve: XIAOGUAI_IM_WECOM__AES_KEY is set but encrypted payloads are not supported in v1.1.3 — disable EncodingAESKey in the WeCom admin console for now"
         );
@@ -1621,8 +1615,7 @@ fn host_is_loopback(host: &str) -> bool {
         return true;
     }
     host.parse::<std::net::IpAddr>()
-        .map(|ip| ip.is_loopback())
-        .unwrap_or(false)
+        .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// SEC-01: explicit opt-out allowing an unauthenticated non-loopback bind.

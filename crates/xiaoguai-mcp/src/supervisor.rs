@@ -270,8 +270,7 @@ fn parse_trusted_servers(raw: &str) -> std::collections::HashSet<String> {
 /// Absent/empty env var → trust nobody (fail-closed default).
 fn server_trusts_read_only_hints(server_name: &str) -> bool {
     std::env::var(XIAOGUAI_MCP_TRUST_READ_ONLY_HINTS_ENV)
-        .map(|raw| parse_trusted_servers(&raw).contains(server_name))
-        .unwrap_or(false)
+        .is_ok_and(|raw| parse_trusted_servers(&raw).contains(server_name))
 }
 
 /// Spawn an `McpClient` matching the persisted manifest's transport.

@@ -102,7 +102,7 @@ impl WatchRunner {
 
     /// Default dedup TTL — 24 hours.  Matches that re-appear after 24 h
     /// are treated as new (wanted for daily alert patterns).
-    pub const DEFAULT_DEDUP_TTL: Duration = Duration::from_secs(86_400);
+    pub const DEFAULT_DEDUP_TTL: Duration = Duration::from_hours(24);
 
     /// Create a new runner with default settings.
     #[must_use]
@@ -274,6 +274,12 @@ fn schedule_to_duration(schedule: &WatchSchedule) -> Duration {
             // Full cron scheduling is deferred to v1.3.x; for now treat cron
             // specs as 60-second intervals and log a warning on first tick.
             warn!("cron schedule not yet supported; falling back to 60-second interval");
+            // Deliberately seconds: this must read the same as the warning
+            // printed one line above, which says "60-second". The attribute is
+            // required because this crate carries an in-source
+            // `#![warn(clippy::pedantic)]` (lib.rs) that overrides both the
+            // workspace `[lints]` table and the `-A` flag CI passes.
+            #[allow(clippy::duration_suboptimal_units)]
             Duration::from_secs(60)
         }
     }

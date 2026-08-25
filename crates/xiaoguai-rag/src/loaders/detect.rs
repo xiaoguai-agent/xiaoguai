@@ -112,14 +112,12 @@ fn dispatch_zip(bytes: &[u8], ext: &str) -> LoadResult {
             let has_word_doc = (0..archive.len()).any(|i| {
                 archive
                     .by_index(i)
-                    .map(|e| e.name().starts_with("word/"))
-                    .unwrap_or(false)
+                    .is_ok_and(|e| e.name().starts_with("word/"))
             });
             let has_ppt = (0..archive.len()).any(|i| {
                 archive
                     .by_index(i)
-                    .map(|e| e.name().starts_with("ppt/"))
-                    .unwrap_or(false)
+                    .is_ok_and(|e| e.name().starts_with("ppt/"))
             });
 
             if has_word_doc {

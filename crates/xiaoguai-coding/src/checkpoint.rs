@@ -151,11 +151,7 @@ impl Workspace {
             for path in added {
                 let abs = root.join(&path);
                 // Only remove regular files that still exist (skip dirs / gone).
-                if tokio::fs::metadata(&abs)
-                    .await
-                    .map(|m| m.is_file())
-                    .unwrap_or(false)
-                {
+                if tokio::fs::metadata(&abs).await.is_ok_and(|m| m.is_file()) {
                     tokio::fs::remove_file(&abs)
                         .await
                         .map_err(|e| CodingError::io(&abs, e))?;
