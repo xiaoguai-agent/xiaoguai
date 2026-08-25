@@ -42,7 +42,7 @@ fn make_spec(id: &str, interval_ms: u64) -> WatchSpec {
 
 #[tokio::test]
 async fn same_row_within_ttl_fires_once() {
-    let dedup = DedupCache::new(100, Duration::from_secs(3600)); // long TTL
+    let dedup = DedupCache::new(100, Duration::from_hours(1)); // long TTL
     let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(32);
 
     let spec = make_spec("dedup-once", 1);
@@ -95,7 +95,7 @@ async fn changed_row_fires_again() {
         }
     }
 
-    let dedup = DedupCache::new(100, Duration::from_secs(3600));
+    let dedup = DedupCache::new(100, Duration::from_hours(1));
     let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(32);
 
     let spec = make_spec("dedup-changed", 1);
@@ -163,7 +163,7 @@ async fn row_fires_again_after_ttl_expiry() {
 
 #[tokio::test]
 async fn two_specs_same_row_are_independent() {
-    let dedup = DedupCache::new(100, Duration::from_secs(3600));
+    let dedup = DedupCache::new(100, Duration::from_hours(1));
     let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(32);
 
     let row: serde_json::Map<String, serde_json::Value> =
@@ -197,7 +197,7 @@ async fn two_specs_same_row_are_independent() {
 
 #[tokio::test]
 async fn empty_source_no_events() {
-    let dedup = DedupCache::new(100, Duration::from_secs(3600));
+    let dedup = DedupCache::new(100, Duration::from_hours(1));
     let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(16);
 
     runner.register(make_spec("empty", 1), InMemorySource::new(vec![]));

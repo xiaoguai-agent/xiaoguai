@@ -47,7 +47,7 @@ pub const MAX_CASES_PER_RUN: usize = 100;
 /// the handler returns 504 with `gateway_timeout` so the console can
 /// surface a clear "your suite is too large for the pane" error rather
 /// than hanging.
-pub const MAX_RUN_DURATION: Duration = Duration::from_secs(60);
+pub const MAX_RUN_DURATION: Duration = Duration::from_mins(1);
 
 /// File extension the suites loader walks for. Mirrors
 /// [`xiaoguai_eval::EvalSuite::load_from_dir`].

@@ -32,7 +32,7 @@
 //!     serde_json::from_value(json!({"tenant_id": "acme", "dso": 72})).unwrap(),
 //! ]);
 //!
-//! let dedup = DedupCache::new(1_000, Duration::from_secs(86400));
+//! let dedup = DedupCache::new(1_000, Duration::from_hours(24));
 //! let mut runner = WatchRunner::with_dedup(dedup);
 //! runner.register(spec, source);
 //! let mut rx = runner.run();
@@ -57,14 +57,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    // rustc 1.95. This crate's TTL and interval values are reasoned about in
-    // seconds throughout — `Duration::from_secs(3600)` next to a "1 hour TTL"
-    // comment reads truer than `from_hours(1)`, and the test fixtures compare
-    // against second-denominated expectations. Note the `#![warn(pedantic)]`
-    // above overrides both the workspace `[lints]` table and CI's `-A` flag,
-    // so this exception has to live here.
-    clippy::duration_suboptimal_units
+    clippy::missing_panics_doc
 )]
 
 pub mod alert_sink;

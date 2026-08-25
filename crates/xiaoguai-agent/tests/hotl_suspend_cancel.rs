@@ -49,7 +49,7 @@ impl LongSuspendGate {
 impl HotlGate for LongSuspendGate {
     async fn check(&self, scope: &str, _amount: f64) -> HotlGateVerdict {
         let escalation_id = Uuid::new_v4();
-        let expires_at = Instant::now() + Duration::from_secs(60);
+        let expires_at = Instant::now() + Duration::from_mins(1);
         let (ticket, sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
         self.senders.lock().push(sender);
         self.registered.notify_one();

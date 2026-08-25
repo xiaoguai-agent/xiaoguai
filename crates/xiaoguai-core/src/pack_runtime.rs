@@ -994,7 +994,7 @@ mod tests {
         .await
         .unwrap();
 
-        let dedup = Arc::new(DedupCache::new(100, std::time::Duration::from_secs(3600)));
+        let dedup = Arc::new(DedupCache::new(100, std::time::Duration::from_hours(1)));
         let exec = PackWatchExecutor::new(dedup, pool.clone(), reqwest::Client::new());
         let job = ScheduledJob::new(
             "w",
@@ -1030,7 +1030,7 @@ mod tests {
     async fn watch_non_select_query_is_rejected() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         let exec = PackWatchExecutor::new(
-            Arc::new(DedupCache::new(10, std::time::Duration::from_secs(60))),
+            Arc::new(DedupCache::new(10, std::time::Duration::from_mins(1))),
             pool,
             reqwest::Client::new(),
         );
@@ -1056,7 +1056,7 @@ mod tests {
             .build()
             .unwrap();
         let exec = PackWatchExecutor::new(
-            Arc::new(DedupCache::new(10, std::time::Duration::from_secs(60))),
+            Arc::new(DedupCache::new(10, std::time::Duration::from_mins(1))),
             pool,
             client,
         );

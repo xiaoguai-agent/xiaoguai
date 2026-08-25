@@ -79,7 +79,7 @@ async fn default_run_serve_selects_suspending_gate() {
         settings.agent.hotl.suspend_on_escalate,
         enforcer,
         registry.clone(),
-        Duration::from_secs(24 * 3600),
+        Duration::from_hours(24),
     );
 
     let verdict = gate.check("tool_call.search", 1.0).await;

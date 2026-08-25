@@ -454,7 +454,7 @@ mod tests {
     #[tokio::test]
     async fn ticket_resolves_when_sender_sends_allow() {
         let escalation_id = Uuid::new_v4();
-        let expires_at = Instant::now() + Duration::from_secs(60);
+        let expires_at = Instant::now() + Duration::from_mins(1);
         let (ticket, sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
 
         assert_eq!(ticket.escalation_id, escalation_id);
@@ -500,7 +500,7 @@ mod tests {
     #[tokio::test]
     async fn ticket_cancels_when_token_fires() {
         let escalation_id = Uuid::new_v4();
-        let expires_at = Instant::now() + Duration::from_secs(60);
+        let expires_at = Instant::now() + Duration::from_mins(1);
         let (ticket, _sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
 
         let cancel = CancellationToken::new();
@@ -521,7 +521,7 @@ mod tests {
     #[tokio::test]
     async fn ticket_returns_channel_dropped_when_sender_dropped() {
         let escalation_id = Uuid::new_v4();
-        let expires_at = Instant::now() + Duration::from_secs(60);
+        let expires_at = Instant::now() + Duration::from_mins(1);
         let (ticket, sender) = HotlSuspensionTicket::new(escalation_id, expires_at);
 
         drop(sender);

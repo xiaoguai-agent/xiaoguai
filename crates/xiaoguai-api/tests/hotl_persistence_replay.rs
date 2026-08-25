@@ -284,7 +284,7 @@ async fn register_persists_failure_leaves_no_in_memory_waiter() {
             escalation_id,
             parent,
             child,
-            Instant::now() + Duration::from_secs(60),
+            Instant::now() + Duration::from_mins(1),
         )
         .await;
     assert!(matches!(result, Err(RegistryError::Storage(_))));
@@ -322,7 +322,7 @@ async fn resolve_persists_before_firing_oneshot() {
             escalation_id,
             parent,
             child,
-            Instant::now() + Duration::from_secs(60),
+            Instant::now() + Duration::from_mins(1),
         )
         .await
         .expect("register must succeed");
@@ -445,7 +445,7 @@ async fn resolve_persisted_reports_false_when_receiver_dropped() {
             escalation_id,
             parent,
             child,
-            Instant::now() + Duration::from_secs(60),
+            Instant::now() + Duration::from_mins(1),
         )
         .await
         .expect("register must succeed");

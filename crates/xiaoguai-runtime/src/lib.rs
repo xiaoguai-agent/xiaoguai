@@ -38,11 +38,6 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::pedantic)]
 #![allow(
-    // rustc 1.95. Retry/backoff windows here are reasoned about in seconds and
-    // the tests assert against second-denominated values. The crate's
-    // `#![warn(clippy::pedantic)]` above overrides both the workspace `[lints]`
-    // table and CI's `-A` flag, so the exception has to live here.
-    clippy::duration_suboptimal_units,
     clippy::module_name_repetitions,
     clippy::missing_errors_doc,
     clippy::missing_panics_doc

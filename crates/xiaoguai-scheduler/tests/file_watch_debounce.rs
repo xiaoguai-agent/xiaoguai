@@ -212,7 +212,7 @@ async fn env_var_debounce_ms_is_respected() {
         .await
         .unwrap();
 
-    let all_events = collect_within(&mut rx, Duration::from_millis(1000)).await;
+    let all_events = collect_within(&mut rx, Duration::from_secs(1)).await;
 
     // Cleanup before any assert so the env var is always removed.
     std::env::remove_var("FILE_WATCH_DEBOUNCE_MS");

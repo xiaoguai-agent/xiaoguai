@@ -664,7 +664,7 @@ impl Reranker for LlmReranker {
             .checked_add(Duration::from_millis(timeout_ms))
             // Absurd operator-configured timeout overflowing the clock: treat
             // as "no deadline pressure" (far future) instead of panicking.
-            .unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(86_400));
+            .unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_hours(24));
 
         let stream_fut = self.llm.chat_stream(req);
         let stream_result = tokio::time::timeout_at(overall_deadline, stream_fut).await;

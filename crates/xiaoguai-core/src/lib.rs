@@ -532,7 +532,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
     // Sprint-13 S13-7: per-scope-class overrides land via
     // `agent.hotl.expiry` (S13-0 surface) — empty map preserves the
     // single-knob v1.9.x behaviour byte-for-byte.
-    let hotl_default_expiry = std::time::Duration::from_secs(24 * 3600);
+    let hotl_default_expiry = std::time::Duration::from_hours(24);
     // Sprint-13 S13-6: wire the `SqliteHotlRedactionRepo` + per-tenant
     // policy required flag + audit sink into the suspend gate so
     // operator banners see masked tool args and the audit chain carries
@@ -645,7 +645,7 @@ pub async fn run_serve(settings: &Settings) -> Result<()> {
                         // per day; the cache is internally concurrent (no Mutex).
                         std::sync::Arc::new(xiaoguai_watch::DedupCache::new(
                             10_000,
-                            std::time::Duration::from_secs(86_400),
+                            std::time::Duration::from_hours(24),
                         )),
                         pool.clone(),
                         reqwest::Client::new(),

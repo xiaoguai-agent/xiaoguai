@@ -61,17 +61,17 @@ fn yaml_per_scope_expiry_parses_humantime_strings() {
 
     assert_eq!(
         s.agent.hotl.expiry.get("tool").copied(),
-        Some(Duration::from_secs(24 * 3600)),
+        Some(Duration::from_hours(24)),
         "tool scope must parse 24h"
     );
     assert_eq!(
         s.agent.hotl.expiry.get("mcp").copied(),
-        Some(Duration::from_secs(4 * 3600)),
+        Some(Duration::from_hours(4)),
         "mcp scope must parse 4h"
     );
     assert_eq!(
         s.agent.hotl.expiry.get("skill").copied(),
-        Some(Duration::from_secs(72 * 3600)),
+        Some(Duration::from_hours(72)),
         "skill scope must parse 72h"
     );
 }

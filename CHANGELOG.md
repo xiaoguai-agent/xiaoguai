@@ -31,6 +31,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   at the time.
 
 ### Changed
+- **Duration literals use the largest exact unit
+  (`clippy::duration_suboptimal_units`)** — rustc 1.95 added this lint and it
+  fired 90 times. #505 suppressed it to keep a toolchain bump reviewable; this
+  applies it properly and **removes every suppression**, so the lint is live
+  again for new code. All 90 were exact conversions — verified by matching the
+  lint's count against the count of exactly-divisible second literals in the
+  tree, so there was no `from_secs(3700)`-style trap where a "conversion" would
+  silently change the value. `from_secs(30)` / `from_secs(10)` and friends are
+  untouched: no exact larger unit exists and the lint never flagged them. One
+  deliberate holdout remains in `xiaoguai-watch::runner`, where the literal must
+  read the same as the adjacent `"60-second interval"` warning.
 - **MSRV policy: a stable-minus-2 band, and rustc 1.94 → 1.95 + `wasmtime`
   47.0.4 → 48.0.0** — the MSRV may now move freely up to `current stable − 2`;
   within that band a dependency raising it is routine rather than an ADR-worthy

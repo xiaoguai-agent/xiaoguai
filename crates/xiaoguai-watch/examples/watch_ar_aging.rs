@@ -103,7 +103,7 @@ async fn main() {
     // ---------------------------------------------------------------------------
     // 3. Build the runner with a 24-hour dedup TTL
     // ---------------------------------------------------------------------------
-    let dedup = DedupCache::new(10_000, Duration::from_secs(86_400));
+    let dedup = DedupCache::new(10_000, Duration::from_hours(24));
     let mut runner = WatchRunner::with_dedup(dedup);
     runner.register(spec, source);
 

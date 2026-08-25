@@ -168,7 +168,7 @@ pub async fn require_auth(
 // and without *rejecting* (which would let an attacker lock the owner out by
 // spamming failures). The first few failures in each window are not delayed,
 // so honest typos — and the test suite — are unaffected.
-const AUTH_FAIL_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+const AUTH_FAIL_WINDOW: std::time::Duration = std::time::Duration::from_mins(1);
 const AUTH_FAIL_FREE: u32 = 5;
 const AUTH_FAIL_STEP: std::time::Duration = std::time::Duration::from_millis(200);
 const AUTH_FAIL_MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(3);

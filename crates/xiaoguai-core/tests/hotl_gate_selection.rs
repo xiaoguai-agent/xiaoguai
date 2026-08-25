@@ -31,12 +31,7 @@ async fn default_off_keeps_enforcer_gate_behaviour() {
     // into Allow + tracing::warn. No ticket is registered.
     let registry = DecisionRegistry::arc();
     let enforcer: Arc<dyn HotlEnforcer> = Arc::new(AlwaysEscalate);
-    let gate = build_hotl_gate(
-        false,
-        enforcer,
-        registry.clone(),
-        Duration::from_secs(24 * 3600),
-    );
+    let gate = build_hotl_gate(false, enforcer, registry.clone(), Duration::from_hours(24));
 
     let verdict = gate.check("tool_call.search", 1.0).await;
     assert!(
@@ -56,12 +51,7 @@ async fn opt_in_swaps_in_suspending_gate() {
     // ticket is awaited or resolved.
     let registry = DecisionRegistry::arc();
     let enforcer: Arc<dyn HotlEnforcer> = Arc::new(AlwaysEscalate);
-    let gate = build_hotl_gate(
-        true,
-        enforcer,
-        registry.clone(),
-        Duration::from_secs(24 * 3600),
-    );
+    let gate = build_hotl_gate(true, enforcer, registry.clone(), Duration::from_hours(24));
 
     let verdict = gate.check("tool_call.search", 1.0).await;
     assert!(

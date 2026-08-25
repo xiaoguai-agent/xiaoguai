@@ -634,7 +634,7 @@ mod tests {
         let _guard = metrics_lock().lock();
         let reg = DecisionRegistry::arc();
         let id = Uuid::new_v4();
-        let _ticket = reg.register(id, Instant::now() + Duration::from_secs(60));
+        let _ticket = reg.register(id, Instant::now() + Duration::from_mins(1));
         assert_eq!(reg.len(), 1);
         let resolved = reg.resolve(id, allow_verdict());
         assert!(resolved, "live waiter must be resolved");
@@ -654,7 +654,7 @@ mod tests {
         let _guard = metrics_lock().lock();
         let reg = DecisionRegistry::arc();
         let id = Uuid::new_v4();
-        let ticket = reg.register(id, Instant::now() + Duration::from_secs(60));
+        let ticket = reg.register(id, Instant::now() + Duration::from_mins(1));
         assert!(reg.resolve(id, allow_verdict()));
         let cancel = CancellationToken::new();
         let got = ticket.await_decision(&cancel).await.unwrap();
@@ -713,9 +713,9 @@ mod tests {
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
         let id3 = Uuid::new_v4();
-        let _t1 = registry.register(id1, Instant::now() + Duration::from_secs(60));
-        let _t2 = registry.register(id2, Instant::now() + Duration::from_secs(60));
-        let _t3 = registry.register(id3, Instant::now() + Duration::from_secs(60));
+        let _t1 = registry.register(id1, Instant::now() + Duration::from_mins(1));
+        let _t2 = registry.register(id2, Instant::now() + Duration::from_mins(1));
+        let _t3 = registry.register(id3, Instant::now() + Duration::from_mins(1));
         assert!(
             (gauge.get() - baseline - 3.0).abs() < f64::EPSILON,
             "after 3 register calls gauge delta must be +3 (got {})",

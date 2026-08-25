@@ -237,8 +237,8 @@ async fn full_suspend_resume_with_redaction_persistence_and_per_scope_expiry() {
     // S13-7: per-scope-class table — `tool` → 6h. Other classes fall
     // back to `default_expiry` (24h) which we never exercise here.
     let mut expiry = HashMap::new();
-    expiry.insert("tool_call".to_string(), Duration::from_secs(6 * 3600));
-    let default_expiry = Duration::from_secs(24 * 3600);
+    expiry.insert("tool_call".to_string(), Duration::from_hours(6));
+    let default_expiry = Duration::from_hours(24);
 
     // S13-6: gate constructed with redaction repo + audit sink.
     let gate = SuspendingHotlGate::with_redaction(

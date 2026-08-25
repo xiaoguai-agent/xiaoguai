@@ -38,7 +38,7 @@ use crate::inbound::{parse_event, SocketModePayload};
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
 
 /// Refresh the WSS URL after this many seconds (Slack closes after ~30 min).
-const WSS_REFRESH_INTERVAL: Duration = Duration::from_secs(9 * 60);
+const WSS_REFRESH_INTERVAL: Duration = Duration::from_mins(9);
 
 /// HTTP timeout for the `apps.connections.open` call.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
