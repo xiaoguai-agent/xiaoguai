@@ -274,11 +274,10 @@ fn schedule_to_duration(schedule: &WatchSchedule) -> Duration {
             // Full cron scheduling is deferred to v1.3.x; for now treat cron
             // specs as 60-second intervals and log a warning on first tick.
             warn!("cron schedule not yet supported; falling back to 60-second interval");
-            // Deliberately seconds: this must read the same as the warning
-            // printed one line above, which says "60-second". The attribute is
-            // required because this crate carries an in-source
-            // `#![warn(clippy::pedantic)]` (lib.rs) that overrides both the
-            // workspace `[lints]` table and the `-A` flag CI passes.
+            // Deliberately seconds, not `from_mins(1)`: this must read the
+            // same as the warning printed one line above, which says
+            // "60-second". Every other exactly-convertible site in the
+            // workspace was rewritten; this is the one intentional holdout.
             #[allow(clippy::duration_suboptimal_units)]
             Duration::from_secs(60)
         }
@@ -314,7 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn single_match_fires_event() {
-        let dedup = DedupCache::new(100, Duration::from_secs(3600));
+        let dedup = DedupCache::new(100, Duration::from_hours(1));
         let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(16);
         let spec = make_spec("test-single");
         let source = InMemorySource::new(vec![serde_json::from_value(json!({"id": 1})).unwrap()]);
@@ -333,7 +332,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_within_ttl_fires_only_once() {
         // Very long TTL — same row should not fire twice.
-        let dedup = DedupCache::new(100, Duration::from_secs(3600));
+        let dedup = DedupCache::new(100, Duration::from_hours(1));
         let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(16);
         let spec = make_spec("test-dedup");
         // Same row every poll.
@@ -386,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_source_fires_no_events() {
-        let dedup = DedupCache::new(100, Duration::from_secs(3600));
+        let dedup = DedupCache::new(100, Duration::from_hours(1));
         let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(16);
         let spec = make_spec("test-empty");
         let source = InMemorySource::new(vec![]);

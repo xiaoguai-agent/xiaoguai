@@ -23,7 +23,7 @@ use crate::git;
 /// running at the deadline is killed and its run reported as `timed_out` — a
 /// resource-safety bound (option C adds no network/denylist sandbox), not a
 /// security boundary.
-const EXEC_TIMEOUT: Duration = Duration::from_secs(120);
+const EXEC_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Cap on the combined stdout+stderr captured from a command (64 KiB). Output
 /// past the cap is dropped with a trailing marker so an unbounded build log

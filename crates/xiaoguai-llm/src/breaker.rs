@@ -254,7 +254,7 @@ mod tests {
     fn fast_config() -> BreakerConfig {
         BreakerConfig {
             failure_threshold: 5,
-            failure_window: Duration::from_secs(60),
+            failure_window: Duration::from_mins(1),
             cooldown: Duration::from_secs(30),
         }
     }

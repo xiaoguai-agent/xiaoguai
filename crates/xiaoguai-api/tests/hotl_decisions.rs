@@ -455,7 +455,7 @@ async fn decision_resolves_live_waiter_returns_resumed_true() {
     let registry = Arc::new(DecisionRegistry::new());
     let escalation_id = Uuid::new_v4();
     // Park a ticket so the route handler has someone to wake.
-    let ticket = registry.register(escalation_id, Instant::now() + Duration::from_secs(60));
+    let ticket = registry.register(escalation_id, Instant::now() + Duration::from_mins(1));
 
     let app = router(build_state(StateOptions {
         decision_store: Some(Arc::clone(&decisions)),

@@ -47,7 +47,7 @@ async fn router_skips_open_breaker_and_uses_healthy_fallback() {
     let breakers = Breakers::with_clock(
         BreakerConfig {
             failure_threshold: 3,
-            failure_window: Duration::from_secs(60),
+            failure_window: Duration::from_mins(1),
             cooldown: Duration::from_secs(30),
         },
         Arc::new(clock.clone()),
@@ -91,7 +91,7 @@ async fn first_call_failure_records_breaker_state() {
     let breakers = Breakers::with_clock(
         BreakerConfig {
             failure_threshold: 2,
-            failure_window: Duration::from_secs(60),
+            failure_window: Duration::from_mins(1),
             cooldown: Duration::from_secs(30),
         },
         Arc::new(clock.clone()),
@@ -127,7 +127,7 @@ async fn success_resets_breaker() {
     let breakers = Breakers::with_clock(
         BreakerConfig {
             failure_threshold: 5,
-            failure_window: Duration::from_secs(60),
+            failure_window: Duration::from_mins(1),
             cooldown: Duration::from_secs(30),
         },
         Arc::new(clock.clone()),

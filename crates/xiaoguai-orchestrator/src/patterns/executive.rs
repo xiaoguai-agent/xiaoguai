@@ -69,7 +69,7 @@ pub const DEFAULT_MAX_MEMBERS: usize = 8;
 /// with `Final { ok: false }`. Members run concurrently, so the run's
 /// worst-case wall clock is bounded by 2 × this value (member fan-out +
 /// synthesis), guaranteeing the event stream always terminates.
-pub const EXECUTIVE_RUN_TIMEOUT: Duration = Duration::from_secs(600);
+pub const EXECUTIVE_RUN_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// Channel capacity for the event stream. A capped-size team emits at
 /// most `2 × members + 3` events, comfortably under 64; if the consumer

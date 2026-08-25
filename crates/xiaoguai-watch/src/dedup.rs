@@ -162,14 +162,14 @@ mod tests {
 
     #[tokio::test]
     async fn first_occurrence_is_not_duplicate() {
-        let cache = DedupCache::new(100, Duration::from_secs(60));
+        let cache = DedupCache::new(100, Duration::from_mins(1));
         let m = make_match(json!({"id": 1}));
         assert!(!cache.is_duplicate("spec", &m).await);
     }
 
     #[tokio::test]
     async fn second_occurrence_within_ttl_is_duplicate() {
-        let cache = DedupCache::new(100, Duration::from_secs(60));
+        let cache = DedupCache::new(100, Duration::from_mins(1));
         let m = make_match(json!({"id": 1}));
         cache.record("spec", &m).await;
         assert!(cache.is_duplicate("spec", &m).await);
@@ -177,7 +177,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalidated_entry_is_not_duplicate() {
-        let cache = DedupCache::new(100, Duration::from_secs(60));
+        let cache = DedupCache::new(100, Duration::from_mins(1));
         let m = make_match(json!({"id": 1}));
         cache.record("spec", &m).await;
         cache.invalidate("spec", &m).await;
@@ -186,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn different_rows_are_independent() {
-        let cache = DedupCache::new(100, Duration::from_secs(60));
+        let cache = DedupCache::new(100, Duration::from_mins(1));
         let m1 = make_match(json!({"id": 1}));
         let m2 = make_match(json!({"id": 2}));
         cache.record("spec", &m1).await;

@@ -200,7 +200,7 @@ impl StreamClient {
                 }
             }
             tokio::time::sleep(backoff).await;
-            backoff = (backoff * 2).min(Duration::from_secs(60));
+            backoff = (backoff * 2).min(Duration::from_mins(1));
         }
     }
 

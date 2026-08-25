@@ -113,7 +113,7 @@ fn rule(scope: &str, jsonpath: &str) -> RedactionPolicyRow {
 }
 
 fn default_expiry() -> Duration {
-    Duration::from_secs(60)
+    Duration::from_mins(1)
 }
 
 // ── tests ───────────────────────────────────────────────────────────────

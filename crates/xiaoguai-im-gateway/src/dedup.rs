@@ -23,7 +23,7 @@ use parking_lot::Mutex;
 /// Default retention for seen event ids. Longer than every adapter's
 /// SEC-05 replay window (±300 s) so a replayed-but-fresh request still
 /// hits the dedup set.
-pub const DEFAULT_DEDUP_TTL: Duration = Duration::from_secs(10 * 60);
+pub const DEFAULT_DEDUP_TTL: Duration = Duration::from_mins(10);
 
 /// Time-bounded set of `(provider, event_id)` pairs already handled.
 pub struct EventDeduper {

@@ -99,7 +99,7 @@ async fn suspend_then_operator_allow_dispatches_tool() {
         ScriptStep::tool_calls(vec![make_call("c1", "search", &serde_json::json!({}))]),
         ScriptStep::text("done"),
     ]));
-    let gate = TestSuspendGate::new(Duration::from_secs(60));
+    let gate = TestSuspendGate::new(Duration::from_mins(1));
     let gate_dyn: Arc<dyn HotlGate> = gate.clone();
     let cfg = AgentConfig::new("mock").with_hotl_gate(gate_dyn);
 

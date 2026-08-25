@@ -51,7 +51,7 @@ const SLACK: Duration = Duration::from_secs(1);
 fn make_gate(expiry: HashMap<String, Duration>) -> (Arc<DecisionRegistry>, SuspendingHotlGate) {
     let registry = DecisionRegistry::arc();
     let enforcer: Arc<dyn HotlEnforcer> = Arc::new(AlwaysEscalate);
-    let default_expiry = Duration::from_secs(24 * 3600);
+    let default_expiry = Duration::from_hours(24);
     let gate = SuspendingHotlGate::with_expiry(enforcer, registry.clone(), default_expiry, expiry);
     (registry, gate)
 }
@@ -98,11 +98,11 @@ fn assert_window(
 #[tokio::test]
 async fn expiry_uses_per_scope_class_when_configured() {
     let mut expiry = HashMap::new();
-    expiry.insert("mcp".to_string(), Duration::from_secs(4 * 3600));
+    expiry.insert("mcp".to_string(), Duration::from_hours(4));
     let (registry, gate) = make_gate(expiry);
 
     let (before, expires_at) = drive_and_extract(&gate, &registry, "mcp.oauth.consent").await;
-    assert_window(before, expires_at, Duration::from_secs(4 * 3600), "mcp.*");
+    assert_window(before, expires_at, Duration::from_hours(4), "mcp.*");
 }
 
 /// scope `tool_call.execute_python` → class `tool_call` → not present →
@@ -110,7 +110,7 @@ async fn expiry_uses_per_scope_class_when_configured() {
 #[tokio::test]
 async fn expiry_falls_back_to_default_when_class_missing() {
     let mut expiry = HashMap::new();
-    expiry.insert("mcp".to_string(), Duration::from_secs(4 * 3600));
+    expiry.insert("mcp".to_string(), Duration::from_hours(4));
     let (registry, gate) = make_gate(expiry);
 
     let (before, expires_at) =
@@ -118,7 +118,7 @@ async fn expiry_falls_back_to_default_when_class_missing() {
     assert_window(
         before,
         expires_at,
-        Duration::from_secs(24 * 3600),
+        Duration::from_hours(24),
         "tool_call.* (fallback)",
     );
 }
@@ -129,7 +129,7 @@ async fn expiry_falls_back_to_default_when_class_missing() {
 #[tokio::test]
 async fn expiry_falls_back_to_default_on_malformed_scope() {
     let mut expiry = HashMap::new();
-    expiry.insert("mcp".to_string(), Duration::from_secs(4 * 3600));
+    expiry.insert("mcp".to_string(), Duration::from_hours(4));
     // Seed an empty-string key to prove the malformed-scope path does
     // NOT fall through to it (the helper uses the full scope as the
     // class when there is no `.`, not the empty string).
@@ -140,7 +140,7 @@ async fn expiry_falls_back_to_default_on_malformed_scope() {
     assert_window(
         before,
         expires_at,
-        Duration::from_secs(24 * 3600),
+        Duration::from_hours(24),
         "malformed scope (fallback)",
     );
 }

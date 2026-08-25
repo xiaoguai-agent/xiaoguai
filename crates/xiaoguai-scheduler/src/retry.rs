@@ -84,7 +84,7 @@ mod tests {
         let p = RetryPolicy::default();
         assert_eq!(p.delay_before_attempt(1), Some(Duration::ZERO));
         assert_eq!(p.delay_before_attempt(2), Some(Duration::from_secs(30)));
-        assert_eq!(p.delay_before_attempt(3), Some(Duration::from_secs(60)));
+        assert_eq!(p.delay_before_attempt(3), Some(Duration::from_mins(1)));
         assert_eq!(p.delay_before_attempt(4), None);
     }
 
@@ -104,9 +104,9 @@ mod tests {
             max_backoff_secs: 600,
         };
         // attempt=2 → 60, attempt=3 → 180, attempt=4 → 540, attempt=5 → would be 1620, clamped to 600.
-        assert_eq!(p.delay_before_attempt(2), Some(Duration::from_secs(60)));
-        assert_eq!(p.delay_before_attempt(5), Some(Duration::from_secs(600)));
-        assert_eq!(p.delay_before_attempt(10), Some(Duration::from_secs(600)));
+        assert_eq!(p.delay_before_attempt(2), Some(Duration::from_mins(1)));
+        assert_eq!(p.delay_before_attempt(5), Some(Duration::from_mins(10)));
+        assert_eq!(p.delay_before_attempt(10), Some(Duration::from_mins(10)));
         assert_eq!(p.delay_before_attempt(11), None);
     }
 

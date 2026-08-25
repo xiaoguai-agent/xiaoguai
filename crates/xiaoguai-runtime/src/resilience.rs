@@ -190,7 +190,7 @@ impl Default for BreakerConfig {
     fn default() -> Self {
         Self {
             threshold: 5,
-            failure_window: Duration::from_secs(60),
+            failure_window: Duration::from_mins(1),
             reset_after: Duration::from_secs(30),
             half_open_max_calls: 1,
         }
@@ -614,7 +614,7 @@ mod tests {
         let clock = FakeClock::new();
         let config = BreakerConfig {
             threshold: 5,
-            failure_window: Duration::from_secs(60),
+            failure_window: Duration::from_mins(1),
             reset_after: Duration::from_secs(30),
             half_open_max_calls: 1,
         };
@@ -731,7 +731,7 @@ mod tests {
     async fn retry_exhausted_returns_last_error_and_opens_breaker() {
         let config = BreakerConfig {
             threshold: 3, // trip after 3 so exhaustion (3 attempts) opens it
-            failure_window: Duration::from_secs(60),
+            failure_window: Duration::from_mins(1),
             reset_after: Duration::from_secs(30),
             half_open_max_calls: 1,
         };
@@ -764,7 +764,7 @@ mod tests {
         // failure. After threshold tasks complete the breaker must be Open.
         let config = BreakerConfig {
             threshold: 5,
-            failure_window: Duration::from_secs(60),
+            failure_window: Duration::from_mins(1),
             reset_after: Duration::from_secs(30),
             half_open_max_calls: 1,
         };
@@ -800,7 +800,7 @@ mod tests {
 
         let config = BreakerConfig {
             threshold: 2,
-            failure_window: Duration::from_secs(60),
+            failure_window: Duration::from_mins(1),
             reset_after: Duration::from_secs(30),
             half_open_max_calls: 1,
         };

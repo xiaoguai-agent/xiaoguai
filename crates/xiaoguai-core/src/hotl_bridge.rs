@@ -1168,17 +1168,17 @@ mod tests {
     #[test]
     fn resolve_expiry_uses_class_match_when_present() {
         let mut expiry = std::collections::HashMap::new();
-        expiry.insert("mcp".to_string(), std::time::Duration::from_secs(4 * 3600));
-        let default_expiry = std::time::Duration::from_secs(24 * 3600);
+        expiry.insert("mcp".to_string(), std::time::Duration::from_hours(4));
+        let default_expiry = std::time::Duration::from_hours(24);
         let got = resolve_expiry(&expiry, default_expiry, "mcp.oauth.consent");
-        assert_eq!(got, std::time::Duration::from_secs(4 * 3600));
+        assert_eq!(got, std::time::Duration::from_hours(4));
     }
 
     #[test]
     fn resolve_expiry_falls_back_to_default_when_class_missing() {
         let mut expiry = std::collections::HashMap::new();
-        expiry.insert("mcp".to_string(), std::time::Duration::from_secs(4 * 3600));
-        let default_expiry = std::time::Duration::from_secs(24 * 3600);
+        expiry.insert("mcp".to_string(), std::time::Duration::from_hours(4));
+        let default_expiry = std::time::Duration::from_hours(24);
         let got = resolve_expiry(&expiry, default_expiry, "tool_call.execute_python");
         assert_eq!(got, default_expiry);
     }
@@ -1190,8 +1190,8 @@ mod tests {
         // so the lookup misses and falls back to default.
         let mut expiry = std::collections::HashMap::new();
         expiry.insert(String::new(), std::time::Duration::from_secs(1));
-        expiry.insert("mcp".to_string(), std::time::Duration::from_secs(4 * 3600));
-        let default_expiry = std::time::Duration::from_secs(24 * 3600);
+        expiry.insert("mcp".to_string(), std::time::Duration::from_hours(4));
+        let default_expiry = std::time::Duration::from_hours(24);
         let got = resolve_expiry(&expiry, default_expiry, "weird");
         assert_eq!(got, default_expiry);
     }
@@ -1199,7 +1199,7 @@ mod tests {
     #[test]
     fn resolve_expiry_with_empty_map_returns_default() {
         let expiry = std::collections::HashMap::new();
-        let default_expiry = std::time::Duration::from_secs(24 * 3600);
+        let default_expiry = std::time::Duration::from_hours(24);
         let got = resolve_expiry(&expiry, default_expiry, "tool_call.search");
         assert_eq!(got, default_expiry);
     }
@@ -1208,10 +1208,10 @@ mod tests {
     fn resolve_expiry_matches_scope_without_dot_when_class_present() {
         // Scope == class (no dot suffix). The whole scope is the class.
         let mut expiry = std::collections::HashMap::new();
-        expiry.insert("mcp".to_string(), std::time::Duration::from_secs(4 * 3600));
-        let default_expiry = std::time::Duration::from_secs(24 * 3600);
+        expiry.insert("mcp".to_string(), std::time::Duration::from_hours(4));
+        let default_expiry = std::time::Duration::from_hours(24);
         let got = resolve_expiry(&expiry, default_expiry, "mcp");
-        assert_eq!(got, std::time::Duration::from_secs(4 * 3600));
+        assert_eq!(got, std::time::Duration::from_hours(4));
     }
 
     #[test]
@@ -1427,7 +1427,7 @@ mod tests {
     }
 
     fn default_expiry() -> std::time::Duration {
-        std::time::Duration::from_secs(60)
+        std::time::Duration::from_mins(1)
     }
 
     #[tokio::test]
@@ -1542,7 +1542,7 @@ mod tests {
         let preexisting_id = Uuid::new_v4();
         let _preexisting_ticket = reg.register(
             preexisting_id,
-            tokio::time::Instant::now() + std::time::Duration::from_secs(60),
+            tokio::time::Instant::now() + std::time::Duration::from_mins(1),
         );
         assert_eq!(reg.len(), 1);
 

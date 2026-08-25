@@ -111,7 +111,7 @@ fn dsl_01_sql_watcher_with_where_clause_validates() {
 #[tokio::test]
 async fn dsl_01_sql_watcher_dedup_key_fires_once() {
     // The "dedup key" is the entire row fingerprint.  Same row → fires once.
-    let dedup = DedupCache::new(100, Duration::from_secs(3600));
+    let dedup = DedupCache::new(100, Duration::from_hours(1));
     let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(16);
 
     let spec = sql_spec("ar-aging-dedup", "SELECT 1", 1);
@@ -257,7 +257,7 @@ fn dsl_05_json_full_round_trip() {
 
 #[tokio::test]
 async fn dsl_06_params_forwarded_in_event() {
-    let dedup = DedupCache::new(100, Duration::from_secs(3600));
+    let dedup = DedupCache::new(100, Duration::from_hours(1));
     let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(8);
 
     let spec = WatchSpec {
@@ -297,7 +297,7 @@ async fn dsl_06_params_forwarded_in_event() {
 
 #[tokio::test]
 async fn dsl_07_empty_result_no_event() {
-    let dedup = DedupCache::new(100, Duration::from_secs(3600));
+    let dedup = DedupCache::new(100, Duration::from_hours(1));
     let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(8);
 
     let spec = sql_spec("empty-src", "SELECT 1", 1);
@@ -320,7 +320,7 @@ async fn dsl_07_empty_result_no_event() {
 #[tokio::test]
 async fn dsl_08_dedup_collision_suppresses_wakeup() {
     // Two identical rows returned on every poll; only the first should fire.
-    let dedup = DedupCache::new(100, Duration::from_secs(3600));
+    let dedup = DedupCache::new(100, Duration::from_hours(1));
     let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(8);
 
     let spec = sql_spec("dedup-collision", "SELECT 1", 1);
@@ -351,7 +351,7 @@ async fn dsl_08_dedup_collision_suppresses_wakeup() {
 
 #[tokio::test]
 async fn dsl_09_distinct_rows_all_fire() {
-    let dedup = DedupCache::new(100, Duration::from_secs(3600));
+    let dedup = DedupCache::new(100, Duration::from_hours(1));
     let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(16);
 
     let spec = sql_spec("multi-row", "SELECT 1", 1);
@@ -567,7 +567,7 @@ fn dsl_19_fingerprint_stable_across_key_order() {
 async fn dsl_20_two_specs_same_row_fire_independently() {
     // Both specs yield the same row content.  They share one dedup cache.
     // Because fingerprints are keyed by spec_id, each spec fires independently.
-    let dedup = DedupCache::new(100, Duration::from_secs(3600));
+    let dedup = DedupCache::new(100, Duration::from_hours(1));
     let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(16);
 
     let shared_row = row(json!({"metric": "cpu_pct", "value": 95}));
@@ -646,7 +646,7 @@ async fn dsl_22_chained_watchers_both_fire_before_cooldown() {
     // Watcher A monitors upstream; Watcher B monitors downstream.
     // Both fire on the first poll; subsequent identical rows are suppressed
     // independently (per spec id).
-    let dedup = DedupCache::new(100, Duration::from_secs(3600));
+    let dedup = DedupCache::new(100, Duration::from_hours(1));
     let mut runner = WatchRunner::with_dedup(dedup).channel_capacity(16);
 
     runner.register(
