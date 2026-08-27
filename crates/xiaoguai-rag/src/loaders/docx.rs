@@ -11,6 +11,7 @@ use std::io::{Cursor, Read};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
+use super::ooxml::resolve_entity;
 use super::{LoadError, LoadResult, LoadedDoc, Loader, PageMeta};
 
 /// Cap on the DECOMPRESSED `word/document.xml` (ZIP-bomb guard). Real
@@ -50,42 +51,34 @@ fn parse_document_xml(xml: &[u8]) -> Result<(String, Vec<String>), LoadError> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let name_bytes = e.name().as_ref().to_vec();
-                let local = local_name(&name_bytes);
-                match local {
-                    b"p" => {
+                match e.name().local_name().as_ref() {
+                    "p" => {
                         // New paragraph — reset accumulator.
                         para_buf.clear();
                         current_para_style = None;
                     }
-                    b"t" => {
+                    "t" => {
                         in_wt = true;
                     }
                     _ => {}
                 }
             }
-            Ok(Event::Empty(ref e)) => {
-                // Self-closing elements like <w:pStyle w:val="Heading1"/>.
-                let name_bytes = e.name().as_ref().to_vec();
-                let local = local_name(&name_bytes);
-                if local == b"pStyle" {
-                    for attr in e.attributes().flatten() {
-                        let key_bytes = attr.key.as_ref().to_vec();
-                        if local_name(&key_bytes) == b"val" {
-                            let val = String::from_utf8_lossy(&attr.value).to_string();
-                            current_para_style = Some(val);
-                        }
+            // Self-closing elements like <w:pStyle w:val="Heading1"/>.
+            Ok(Event::Empty(ref e)) if e.name().local_name().as_ref() == "pStyle" => {
+                for attr in e.attributes().flatten() {
+                    if attr.key.local_name().as_ref() == "val" {
+                        // Style names carry no entities; keep the raw value
+                        // exactly as the previous `from_utf8_lossy` did.
+                        current_para_style = Some(attr.value.into_owned());
                     }
                 }
             }
             Ok(Event::End(ref e)) => {
-                let name_bytes = e.name().as_ref().to_vec();
-                let local = local_name(&name_bytes);
-                match local {
-                    b"t" => {
+                match e.name().local_name().as_ref() {
+                    "t" => {
                         in_wt = false;
                     }
-                    b"p" => {
+                    "p" => {
                         // End of paragraph — commit to output.
                         let trimmed = para_buf.trim().to_string();
                         if !trimmed.is_empty() {
@@ -108,14 +101,14 @@ fn parse_document_xml(xml: &[u8]) -> Result<(String, Vec<String>), LoadError> {
                 }
             }
             Ok(Event::Text(ref e)) if in_wt => {
-                // quick-xml 0.40 split decode (charset) from entity unescaping:
-                // BytesText::unescape() is gone; decode() then escape::unescape().
-                let raw = e.decode().unwrap_or_default();
-                let text = match quick_xml::escape::unescape(&raw) {
-                    Ok(t) => t.into_owned(),
-                    Err(_) => raw.into_owned(),
-                };
-                para_buf.push_str(&text);
+                // quick-xml 0.42 folded charset decoding into the reader, so
+                // BytesText derefs straight to &str and decode() is gone. The
+                // text no longer carries entities either — they arrive as their
+                // own GeneralRef event, handled below.
+                para_buf.push_str(e);
+            }
+            Ok(Event::GeneralRef(ref e)) if in_wt => {
+                para_buf.push_str(&resolve_entity(e));
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -130,15 +123,6 @@ fn parse_document_xml(xml: &[u8]) -> Result<(String, Vec<String>), LoadError> {
     }
 
     Ok((full_text, headings))
-}
-
-fn local_name(qname: &[u8]) -> &[u8] {
-    // Strip the namespace prefix (everything before the first ':').
-    if let Some(pos) = qname.iter().position(|&b| b == b':') {
-        &qname[pos + 1..]
-    } else {
-        qname
-    }
 }
 
 impl Loader for DocxLoader {
@@ -253,5 +237,24 @@ mod tests {
             .load(b"not a zip file at all")
             .expect_err("must error on junk");
         assert!(matches!(err, LoadError::Malformed { .. }));
+    }
+
+    #[test]
+    fn text_is_unescaped_and_namespace_prefix_is_stripped() {
+        // Pins both halves of the 0.42 port: QName moved to &str so `w:`-prefixed
+        // names must still match, and entities now arrive as separate GeneralRef
+        // events that a Text-only loader would drop silently.
+        let xml = b"<w:p><w:r><w:t>R&amp;D &lt;core&gt;</w:t></w:r></w:p>";
+        let (text, _) = parse_document_xml(xml).expect("parse ok");
+        assert_eq!(text, "R&D <core>");
+    }
+
+    #[test]
+    fn heading_style_attribute_is_read_from_prefixed_attr() {
+        // `<w:pStyle w:val="Heading1"/>` — the attribute key is prefixed too,
+        // and its value now arrives as Cow<str> rather than raw bytes.
+        let xml = br#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Title Here</w:t></w:r></w:p>"#;
+        let (_, headings) = parse_document_xml(xml).expect("parse ok");
+        assert_eq!(headings, vec!["Title Here".to_string()]);
     }
 }

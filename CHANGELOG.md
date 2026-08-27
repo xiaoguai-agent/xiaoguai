@@ -28,6 +28,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the actual configuration.
 
 ### Fixed
+- **DOCX/PPTX loaders dropped every XML entity on the quick-xml 0.42 bump** —
+  0.42 stopped delivering entity references inside `Event::Text` and began
+  emitting them as their own `Event::GeneralRef`, so a loader matching only on
+  `Event::Text` silently loses them: `R&amp;D` ingested as `RD`. Nothing in the
+  build caught it — the compiler only flagged the `QName`-to-`&str` move, and
+  every existing loader fixture is entity-free, so the suite stayed green. PPTX
+  had a second failure on the same change: it space-joined per event rather than
+  per `<a:t>` run, turning an entity-split run into `R & D`. Runs are now
+  buffered whole (including a flush at EOF, so an unterminated trailing run is
+  not lost either), and entity resolution is shared in `loaders::ooxml`, which
+  re-emits an unresolvable entity verbatim rather than dropping it.
+
 - **`FileWatchSettings` had two disagreeing defaults** — `#[derive(Default)]`
   produced `load_routes_from_db = false` while the struct's
   `#[serde(default = ...)]` and its own doc comment both said `true`. Both paths
