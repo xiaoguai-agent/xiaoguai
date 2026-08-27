@@ -24,6 +24,7 @@ pub mod detect;
 pub mod docx;
 pub mod html;
 pub mod markdown;
+mod ooxml;
 pub mod pdf;
 pub mod pptx;
 

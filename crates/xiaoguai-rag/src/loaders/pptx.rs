@@ -11,6 +11,7 @@ use std::io::{Cursor, Read};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
+use super::ooxml::resolve_entity;
 use super::{LoadError, LoadResult, LoadedDoc, Loader, PageMeta};
 
 /// Stateless PPTX loader.
@@ -33,6 +34,33 @@ const MAX_SLIDE_TEXT_BYTES: usize = 256 * 1024;
 /// a few KB; 8 MiB is far beyond any legitimate deck.
 const MAX_SLIDE_XML_BYTES: usize = 8 * 1024 * 1024;
 
+/// Append one finished `<a:t>` run to the slide's text, space-joined.
+///
+/// Returns `true` when the per-slide cap was reached and collection for this
+/// slide must stop.
+fn push_run(slide_text: &mut String, run: &str) -> bool {
+    let trimmed = run.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if !slide_text.is_empty() {
+        slide_text.push(' ');
+    }
+    let remaining = MAX_SLIDE_TEXT_BYTES.saturating_sub(slide_text.len());
+    if trimmed.len() <= remaining {
+        slide_text.push_str(trimmed);
+        return false;
+    }
+    // Cap reached (guards against one giant run too). Append a
+    // char-boundary-safe prefix and stop collecting this slide.
+    let mut end = remaining;
+    while end > 0 && !trimmed.is_char_boundary(end) {
+        end -= 1;
+    }
+    slide_text.push_str(&trimmed[..end]);
+    true
+}
+
 /// Extract all `<a:t>` text runs from a single slide XML blob.
 fn extract_slide_text(xml: &[u8]) -> Result<String, LoadError> {
     let mut reader = Reader::from_reader(xml);
@@ -41,51 +69,38 @@ fn extract_slide_text(xml: &[u8]) -> Result<String, LoadError> {
 
     let mut slide_text = String::new();
     let mut in_at = false;
+    // One `<a:t>` run is buffered whole before it is appended. quick-xml 0.42
+    // splits a run at every entity reference, so appending per event would turn
+    // `R&amp;D` into `R & D` — the space-joining below is per RUN, not per event.
+    let mut run_buf = String::new();
     let mut buf = Vec::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) => {
-                let name_bytes = e.name().as_ref().to_vec();
-                if local_name(&name_bytes) == b"t" {
-                    in_at = true;
-                }
-            }
-            Ok(Event::End(ref e)) => {
-                let name_bytes = e.name().as_ref().to_vec();
-                if local_name(&name_bytes) == b"t" {
-                    in_at = false;
-                }
+            Ok(Event::Start(ref e)) if e.name().local_name().as_ref() == "t" => {
+                in_at = true;
+                run_buf.clear();
             }
             Ok(Event::Text(ref e)) if in_at => {
-                // quick-xml 0.40: decode() (charset) then escape::unescape()
-                // replace the removed BytesText::unescape().
-                let raw = e.decode().unwrap_or_default();
-                let chunk = match quick_xml::escape::unescape(&raw) {
-                    Ok(t) => t.into_owned(),
-                    Err(_) => raw.into_owned(),
-                };
-                let trimmed = chunk.trim();
-                if !trimmed.is_empty() {
-                    if !slide_text.is_empty() {
-                        slide_text.push(' ');
-                    }
-                    let remaining = MAX_SLIDE_TEXT_BYTES.saturating_sub(slide_text.len());
-                    if trimmed.len() <= remaining {
-                        slide_text.push_str(trimmed);
-                    } else {
-                        // Cap reached (guards against one giant run too). Append a
-                        // char-boundary-safe prefix and stop collecting this slide.
-                        let mut end = remaining;
-                        while end > 0 && !trimmed.is_char_boundary(end) {
-                            end -= 1;
-                        }
-                        slide_text.push_str(&trimmed[..end]);
-                        break;
-                    }
-                }
+                run_buf.push_str(e);
             }
-            Ok(Event::Eof) => break,
+            Ok(Event::GeneralRef(ref e)) if in_at => {
+                run_buf.push_str(&resolve_entity(e));
+            }
+            Ok(Event::End(ref e)) if e.name().local_name().as_ref() == "t" => {
+                in_at = false;
+                if push_run(&mut slide_text, &run_buf) {
+                    break;
+                }
+                run_buf.clear();
+            }
+            Ok(Event::Eof) => {
+                // Buffering per run means an unterminated trailing `<a:t>` would
+                // otherwise be dropped; the pre-0.42 loop wrote each text event
+                // through immediately and never lost it.
+                push_run(&mut slide_text, &run_buf);
+                break;
+            }
             Err(e) => {
                 return Err(LoadError::Malformed {
                     format: "pptx",
@@ -98,14 +113,6 @@ fn extract_slide_text(xml: &[u8]) -> Result<String, LoadError> {
     }
 
     Ok(slide_text.trim().to_string())
-}
-
-fn local_name(qname: &[u8]) -> &[u8] {
-    if let Some(pos) = qname.iter().position(|&b| b == b':') {
-        &qname[pos + 1..]
-    } else {
-        qname
-    }
 }
 
 impl Loader for PptxLoader {
@@ -277,5 +284,24 @@ mod tests {
         let xml = "<a:t>hello</a:t><a:t>world</a:t>";
         let out = extract_slide_text(xml.as_bytes()).expect("parse ok");
         assert_eq!(out, "hello world");
+    }
+
+    #[test]
+    fn slide_text_unescapes_entities() {
+        // quick-xml 0.42 emits every entity as its own GeneralRef event rather
+        // than inside the text, so a loader that handles only Event::Text drops
+        // them silently. Pins that they survive, and that a run split by an
+        // entity is not space-joined back as "R & D".
+        let xml = "<a:t>R&amp;D &lt;core&gt; &quot;x&quot;</a:t>";
+        let out = extract_slide_text(xml.as_bytes()).expect("parse ok");
+        assert_eq!(out, r#"R&D <core> "x""#);
+    }
+
+    #[test]
+    fn unterminated_run_still_yields_its_text() {
+        // Malformed slide: `<a:t>` never closes. Runs are buffered now, so the
+        // EOF arm has to flush or the text vanishes without a parse error.
+        let out = extract_slide_text(b"<a:t>trailing").expect("parse ok");
+        assert_eq!(out, "trailing");
     }
 }
