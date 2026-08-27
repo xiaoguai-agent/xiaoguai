@@ -43,3 +43,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/check-merge-queue-triggers.sh
+
+      # A workflow whose YAML parses but whose GitHub expressions do not is
+      # rejected by Actions at STARTUP: the run has zero jobs and reports only
+      # "this run likely failed because of a workflow file issue". For a
+      # tag-triggered release workflow that is invisible — release-tarball.yml
+      # was broken for two days and 20 runs before anyone looked, and would
+      # have failed the next `v*` tag. actionlint catches it on the PR instead.
+      - name: Workflows are valid (actionlint)
+        uses: raven-actions/actionlint@v2
+        with:
+          fail-on-error: true
+          # shellcheck/pyflakes are OFF on purpose. They flag 15 pre-existing
+          # info/style findings across six workflows (rust.yml included), none
+          # of which can fail a run — turning them on here would either redden
+          # the gate immediately or drag six unrelated files into any PR that
+          # touches CI. This step guards the class that actually breaks things:
+          # a workflow Actions refuses to start.
+          shellcheck: false
+          pyflakes: false

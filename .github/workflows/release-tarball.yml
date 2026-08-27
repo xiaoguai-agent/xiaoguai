@@ -333,8 +333,13 @@ jobs:
             echo ""
             echo "---"
             echo ""
-            # __TAG__ stands in for the tag: the file is read with `cat`, not
-            # embedded in YAML, so `${{ }}` would not be interpolated here.
+            # __TAG__ stands in for the tag: the file is read from disk rather
+            # than embedded in YAML, so a GitHub expression written inside it
+            # would never be interpolated. NB do not write an empty GitHub
+            # expression anywhere in this run block, comments included — Actions
+            # parses the whole block for expressions and does not know shell
+            # comment syntax, so an empty one is a syntax error that fails the
+            # entire workflow at startup.
             sed "s/__TAG__/${TAG}/g" .github/release-body-verification.md
           } > release-notes.md
           echo "--- rendered notes ---"; head -30 release-notes.md
