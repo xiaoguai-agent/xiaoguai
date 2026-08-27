@@ -28,6 +28,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the actual configuration.
 
 ### Fixed
+- **The bare-metal release workflow could not start, and the next `v*` tag would
+  have failed** — a shell comment inside a `run:` block contained an empty
+  GitHub expression. Actions parses a `run:` block for expressions without
+  knowing shell comment syntax, so the empty one was a syntax error and the
+  whole workflow was rejected at startup: zero jobs, no logs, only "this run
+  likely failed because of a workflow file issue". Introduced alongside the
+  CHANGELOG release gate and invisible for two days and 20 runs, because a
+  tag-triggered workflow's failures only surface at release time. `actionlint`
+  now runs on every PR (shellcheck and pyflakes off — they report only
+  pre-existing info-level findings) and was verified by re-injecting the defect.
+
 - **DOCX/PPTX loaders dropped every XML entity on the quick-xml 0.42 bump** —
   0.42 stopped delivering entity references inside `Event::Text` and began
   emitting them as their own `Event::GeneralRef`, so a loader matching only on
