@@ -219,7 +219,7 @@ impl PackLoader {
             .await
             .with_context(|| format!("read pack manifest: {}", manifest_path.display()))?;
 
-        let manifest: PackManifest = serde_yaml::from_str(&raw)
+        let manifest: PackManifest = xiaoguai_yaml::from_str(&raw)
             .with_context(|| format!("parse pack manifest: {}", manifest_path.display()))?;
 
         let pack_dir = manifest_path
@@ -409,7 +409,7 @@ agents:
     #[test]
     fn manifest_parses_correctly() {
         let manifest: PackManifest =
-            serde_yaml::from_str(minimal_manifest_yaml()).expect("parse failed");
+            xiaoguai_yaml::from_str(minimal_manifest_yaml()).expect("parse failed");
         assert_eq!(manifest.name, "test-pack");
         assert_eq!(manifest.version, "0.1.0");
         assert!(manifest.requires.features.contains(&"watch".to_string()));
@@ -460,7 +460,8 @@ migrations:
 
     #[test]
     fn register_pack_stub_does_not_panic() {
-        let manifest: PackManifest = serde_yaml::from_str(minimal_manifest_yaml()).expect("parse");
+        let manifest: PackManifest =
+            xiaoguai_yaml::from_str(minimal_manifest_yaml()).expect("parse");
         let watches = WatchRegistry;
         let anomalies = AnomalyRegistry;
         // Paths don't exist — that's fine for stub registration.

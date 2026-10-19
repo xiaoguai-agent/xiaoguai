@@ -89,7 +89,7 @@ sha2 = { workspace = true } # SEC-19: hash webhook tokens at rest
 # (`cfg(feature = "packs")`) so existing builds are unaffected until the flag is
 # enabled. Template rendering (tera) was dropped as currently-unused in
 # packs.rs; re-add when a later phase needs it.
-serde_yaml = { workspace = true, optional = true }
+xiaoguai-yaml = { path = "../xiaoguai-yaml", optional = true }
 # serde with derive is needed by packs.rs (feature-gated) for PackManifest
 # deserialization. Pulled in explicitly so the proc-macro path is unambiguous
 # even when rmcp re-exports its own serde namespace.
@@ -122,7 +122,7 @@ observability = ["dep:xiaoguai-observability"]
 # v1.3.1-prep: pack loader (declarative skill-pack manifest parsing + path
 # validation). Enable with: cargo build --features packs. The CLI enables it for
 # `xiaoguai pack validate`. Will be on by default once registration lands.
-packs = ["dep:serde_yaml", "dep:serde", "dep:xiaoguai-anomaly", "dep:xiaoguai-watch", "dep:reqwest"]
+packs = ["dep:xiaoguai-yaml", "dep:serde", "dep:xiaoguai-anomaly", "dep:xiaoguai-watch", "dep:reqwest"]
 
 [dev-dependencies]
 parking_lot = { workspace = true }
@@ -137,10 +137,10 @@ tokio-util = { workspace = true }
 reqwest = { workspace = true }
 # ar-collections pack integration tests (template rendering, spec parsing) —
 # the [[test]] target above points at packs/ar-collections/tests/integration.rs,
-# which imports tera + serde_yaml directly rather than via packs.rs so it runs
+# which imports tera + xiaoguai-yaml directly rather than via packs.rs so it runs
 # without --features packs.
 tera = { workspace = true }
-serde_yaml = { workspace = true }
+xiaoguai-yaml = { path = "../xiaoguai-yaml" }
 serde_json = { workspace = true }
 serde = { workspace = true }
 

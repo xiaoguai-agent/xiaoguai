@@ -65,7 +65,7 @@ mod tests {
 
     fn write_case(dir: &Path, name: &str, case: &EvalCase) {
         let path = dir.join(format!("{name}.eval.yaml"));
-        let yaml = serde_yaml::to_string(case).unwrap();
+        let yaml = xiaoguai_yaml::to_string(case).unwrap();
         std::fs::write(path, yaml).unwrap();
     }
 

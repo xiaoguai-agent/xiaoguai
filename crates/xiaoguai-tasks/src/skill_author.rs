@@ -589,7 +589,8 @@ fn write_skill_yaml(path: &Path, m: &SkillManifest) -> Result<(), SkillAuthorErr
     if path.exists() {
         return Err(SkillAuthorError::SkillFileExists);
     }
-    let yaml = serde_yaml::to_string(m).map_err(|e| SkillAuthorError::YamlRender(e.to_string()))?;
+    let yaml =
+        xiaoguai_yaml::to_string(m).map_err(|e| SkillAuthorError::YamlRender(e.to_string()))?;
     std::fs::write(path, yaml)
         .map_err(|e| SkillAuthorError::Backend(format!("write {}: {e}", path.display())))?;
     Ok(())
@@ -993,7 +994,7 @@ mod tests {
         let file = tmp.path().join("ar-collector-0.1.0.yaml");
         assert!(file.exists(), "yaml should land on disk");
         let parsed: SkillManifest =
-            serde_yaml::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+            xiaoguai_yaml::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(parsed, good_manifest());
 
         // Three audit rows in total: propose, gate, approve.

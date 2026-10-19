@@ -22,7 +22,7 @@
 // -------------------------------------------------------------------------
 // Dependencies
 // Tera is the Jinja-compatible template engine used in production.
-// serde_yaml parses the declarative YAML specs.
+// xiaoguai_yaml parses the declarative YAML specs.
 // -------------------------------------------------------------------------
 use std::path::PathBuf;
 use tera::{Context, Tera};
@@ -131,11 +131,11 @@ struct AnomalyAlert {
 }
 
 // -------------------------------------------------------------------------
-// Manual YAML parsing helpers using serde_yaml::Value to avoid the serde
+// Manual YAML parsing helpers using serde_json::Value to avoid the serde
 // trait ambiguity (rmcp re-exports its own serde namespace).
 // -------------------------------------------------------------------------
 
-fn parse_str_field(v: &serde_yaml::Value, key: &str) -> String {
+fn parse_str_field(v: &serde_json::Value, key: &str) -> String {
     v[key]
         .as_str()
         .unwrap_or_else(|| panic!("missing or non-string field: {key}"))
@@ -146,11 +146,11 @@ fn parse_str_field(v: &serde_yaml::Value, key: &str) -> String {
     dead_code,
     reason = "helper retained for future test cases; not yet exercised"
 )]
-fn parse_opt_str(v: &serde_yaml::Value, key: &str) -> Option<String> {
+fn parse_opt_str(v: &serde_json::Value, key: &str) -> Option<String> {
     v[key].as_str().map(str::to_owned)
 }
 
-fn parse_u32_field(v: &serde_yaml::Value, key: &str) -> u32 {
+fn parse_u32_field(v: &serde_json::Value, key: &str) -> u32 {
     #[allow(
         clippy::cast_possible_truncation,
         reason = "YAML integers in pack specs are expected to be small (< 2^32); truncation would be a schema error"
@@ -161,15 +161,15 @@ fn parse_u32_field(v: &serde_yaml::Value, key: &str) -> u32 {
     val
 }
 
-fn parse_f64_field(v: &serde_yaml::Value, key: &str) -> f64 {
+fn parse_f64_field(v: &serde_json::Value, key: &str) -> f64 {
     v[key]
         .as_f64()
         .unwrap_or_else(|| panic!("missing or non-float field: {key}"))
 }
 
-fn parse_seq_strings(v: &serde_yaml::Value, key: &str) -> Vec<String> {
+fn parse_seq_strings(v: &serde_json::Value, key: &str) -> Vec<String> {
     v[key]
-        .as_sequence()
+        .as_array()
         .map(|seq| {
             seq.iter()
                 .filter_map(|item| item.as_str().map(str::to_owned))
@@ -178,9 +178,9 @@ fn parse_seq_strings(v: &serde_yaml::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn parse_seq_paths(v: &serde_yaml::Value, key: &str) -> Vec<PackPath> {
+fn parse_seq_paths(v: &serde_json::Value, key: &str) -> Vec<PackPath> {
     v[key]
-        .as_sequence()
+        .as_array()
         .map(|seq| {
             seq.iter()
                 .map(|item| PackPath {
@@ -192,7 +192,7 @@ fn parse_seq_paths(v: &serde_yaml::Value, key: &str) -> Vec<PackPath> {
 }
 
 fn parse_pack_manifest(raw: &str) -> PackManifest {
-    let v: serde_yaml::Value = serde_yaml::from_str(raw).expect("pack.yaml: invalid YAML");
+    let v: serde_json::Value = xiaoguai_yaml::from_str(raw).expect("pack.yaml: invalid YAML");
     PackManifest {
         name: parse_str_field(&v, "name"),
         version: parse_str_field(&v, "version"),
@@ -207,7 +207,7 @@ fn parse_pack_manifest(raw: &str) -> PackManifest {
 }
 
 fn parse_watch_spec(raw: &str) -> WatchSpec {
-    let v: serde_yaml::Value = serde_yaml::from_str(raw).expect("watch spec: invalid YAML");
+    let v: serde_json::Value = xiaoguai_yaml::from_str(raw).expect("watch spec: invalid YAML");
     WatchSpec {
         id: parse_str_field(&v, "id"),
         query: parse_str_field(&v["source"]["sql"], "query"),
@@ -219,7 +219,7 @@ fn parse_watch_spec(raw: &str) -> WatchSpec {
 }
 
 fn parse_anomaly_spec(raw: &str) -> AnomalySpec {
-    let v: serde_yaml::Value = serde_yaml::from_str(raw).expect("anomaly spec: invalid YAML");
+    let v: serde_json::Value = xiaoguai_yaml::from_str(raw).expect("anomaly spec: invalid YAML");
     AnomalySpec {
         name: parse_str_field(&v, "name"),
         version: parse_str_field(&v, "version"),

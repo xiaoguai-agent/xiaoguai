@@ -615,7 +615,8 @@ impl Settings {
     /// # Errors
     /// Returns a textual error if env vars fail to deserialize.
     pub fn load_from_env() -> Result<Self, String> {
-        let defaults_yaml = serde_yaml::to_string(&Self::default()).map_err(|e| e.to_string())?;
+        let defaults_yaml =
+            xiaoguai_yaml::to_string(&Self::default()).map_err(|e| e.to_string())?;
         let cfg = ::config::Config::builder()
             .add_source(::config::File::from_str(
                 &defaults_yaml,
@@ -673,6 +674,20 @@ mod tests {
         assert_eq!(s.server.port, 9999, "nested env override must apply");
         // Unset fields keep their in-code defaults.
         assert_eq!(s.database.max_connections, default_db_max_connections());
+    }
+
+    /// `load_from_env` renders `Settings::default()` with `xiaoguai_yaml` and
+    /// reads it back through the `config` crate's own YAML parser. Every field
+    /// must survive that trip unchanged, or an env-only deployment silently
+    /// runs on a different default than the code declares.
+    #[test]
+    fn load_from_env_without_overrides_reproduces_every_default() {
+        let _env = env_guard();
+        let loaded = Settings::load_from_env().expect("default load");
+        assert_eq!(
+            serde_json::to_value(&loaded).unwrap(),
+            serde_json::to_value(Settings::default()).unwrap(),
+        );
     }
 
     /// Sprint-12 S12-12 — default flip for v1.9.0. `suspend_on_escalate`
@@ -785,7 +800,7 @@ mod tests {
     fn file_watch_default_matches_serde_defaults() {
         let from_default = FileWatchSettings::default();
         let from_serde: FileWatchSettings =
-            serde_yaml::from_str("{}").expect("empty map deserializes");
+            xiaoguai_yaml::from_str("{}").expect("empty map deserializes");
 
         assert_eq!(
             from_default.load_routes_from_db, from_serde.load_routes_from_db,

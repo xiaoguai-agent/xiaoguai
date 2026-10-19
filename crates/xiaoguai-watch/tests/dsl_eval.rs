@@ -176,7 +176,7 @@ source:
 on_match:
   action: create_task
 "#;
-    let spec: WatchSpec = serde_yaml::from_str(yaml).unwrap();
+    let spec: WatchSpec = xiaoguai_yaml::from_str(yaml).unwrap();
     spec.validate()
         .expect("spec with HTTP defaults must validate");
 
@@ -216,8 +216,8 @@ fn dsl_04_yaml_full_round_trip() {
         },
     };
 
-    let yaml = serde_yaml::to_string(&original).unwrap();
-    let restored: WatchSpec = serde_yaml::from_str(&yaml).unwrap();
+    let yaml = xiaoguai_yaml::to_string(&original).unwrap();
+    let restored: WatchSpec = xiaoguai_yaml::from_str(&yaml).unwrap();
 
     assert_eq!(original, restored, "YAML round-trip must be lossless");
     restored.validate().expect("restored spec must validate");
@@ -717,6 +717,6 @@ on_match:
 "#;
     // Expect deserialization to succeed and produce a 5-second interval.
     let spec: WatchSpec =
-        serde_yaml::from_str(yaml).expect("shorthand interval should deserialise");
+        xiaoguai_yaml::from_str(yaml).expect("shorthand interval should deserialise");
     assert_eq!(spec.schedule, WatchSchedule::IntervalSecs { secs: 5 });
 }

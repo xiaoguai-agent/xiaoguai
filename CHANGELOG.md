@@ -30,6 +30,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `unsafe-libyaml` (unmaintained, via the deprecated `serde_yaml`) is ignored
   with a written reason in both audit configs until `serde_yaml` is replaced —
   there is no patched version to move to.
+- **Replaced `serde_yaml` with `serde-saphyr`, a safe-Rust YAML parser**, so
+  the unmaintained c2rust `unsafe-libyaml` is out of the dependency tree and
+  the RUSTSEC-2024-0449 ignore above is gone again. All YAML now goes through
+  one new crate, `xiaoguai-yaml`, which holds the parser policy in one place:
+  strict booleans (`yes`/`on` stay strings, as before), `.inf`/`.nan` → `null`
+  in untyped values (as before), duplicate keys always rejected, merge keys
+  (`<<: *anchor`) expanded, and one-line error messages with a location but
+  no source snippet. Checked against serde_yaml on every YAML file in the
+  repo (622 parsed as untyped values, 263 pack manifests/watches/anomalies/
+  agents parsed as typed structs, 619 re-rendered and read back by both
+  parsers): no differences. Edge cases that do differ and no option controls —
+  quoted `'5'` accepted for an integer field, unquoted `017`/`1_000` read as
+  numbers in untyped values, unknown tags ignored — are listed in the
+  `xiaoguai-yaml` crate docs. Rendered YAML (skill files, eval cases, `--output
+  yaml`) now double-quotes ambiguous strings and folds long ones; it reads
+  back identically.
 
 ### Added
 - **Guard: every required status check must be able to report inside the merge

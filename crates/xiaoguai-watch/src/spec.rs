@@ -164,8 +164,8 @@ mod tests {
     #[test]
     fn yaml_round_trip() {
         let spec = minimal_sql_spec();
-        let yaml = serde_yaml::to_string(&spec).unwrap();
-        let back: WatchSpec = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = xiaoguai_yaml::to_string(&spec).unwrap();
+        let back: WatchSpec = xiaoguai_yaml::from_str(&yaml).unwrap();
         assert_eq!(spec, back);
     }
 
@@ -244,7 +244,7 @@ source:
 on_match:
   action: notify
 "#;
-        let spec: WatchSpec = serde_yaml::from_str(yaml).unwrap();
+        let spec: WatchSpec = xiaoguai_yaml::from_str(yaml).unwrap();
         match &spec.source {
             WatchSourceSpec::Http {
                 jsonpath, method, ..

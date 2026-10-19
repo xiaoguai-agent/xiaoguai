@@ -25,7 +25,7 @@ pub enum SuiteError {
     Yaml {
         path: PathBuf,
         #[source]
-        source: serde_yaml::Error,
+        source: xiaoguai_yaml::Error,
     },
     #[error("no .eval.yaml files found under {path}")]
     EmptyDir { path: PathBuf },
@@ -71,10 +71,11 @@ impl EvalSuite {
                 path: path.clone(),
                 source,
             })?;
-            let case: EvalCase = serde_yaml::from_str(&raw).map_err(|source| SuiteError::Yaml {
-                path: path.clone(),
-                source,
-            })?;
+            let case: EvalCase =
+                xiaoguai_yaml::from_str(&raw).map_err(|source| SuiteError::Yaml {
+                    path: path.clone(),
+                    source,
+                })?;
             cases.push(case);
         }
         Ok(Self {
@@ -98,7 +99,7 @@ mod tests {
 
     fn write_case(dir: &Path, name: &str, case: &EvalCase) {
         let path = dir.join(format!("{name}.{CASE_EXTENSION}"));
-        let yaml = serde_yaml::to_string(case).unwrap();
+        let yaml = xiaoguai_yaml::to_string(case).unwrap();
         std::fs::write(path, yaml).unwrap();
     }
 
