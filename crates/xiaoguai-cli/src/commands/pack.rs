@@ -259,16 +259,14 @@ async fn unknown_top_level_keys(manifest_path: &Path) -> Result<Vec<String>> {
     let raw = tokio::fs::read_to_string(manifest_path)
         .await
         .with_context(|| format!("read {}", manifest_path.display()))?;
-    let value: serde_yaml::Value =
-        serde_yaml::from_str(&raw).context("re-parse manifest for key audit")?;
+    let value: serde_json::Value =
+        xiaoguai_yaml::from_str(&raw).context("re-parse manifest for key audit")?;
 
     let mut extra = Vec::new();
-    if let serde_yaml::Value::Mapping(map) = value {
+    if let serde_json::Value::Object(map) = value {
         for key in map.keys() {
-            if let Some(s) = key.as_str() {
-                if !KNOWN_KEYS.contains(&s) {
-                    extra.push(s.to_string());
-                }
+            if !KNOWN_KEYS.contains(&key.as_str()) {
+                extra.push(key.clone());
             }
         }
     }

@@ -303,6 +303,6 @@ async fn approved_yaml_round_trips_back_to_the_proposed_manifest() {
 
     let yaml_path: PathBuf = fx.tmp.path().join("ar-collector-0.1.0.yaml");
     let parsed: SkillManifest =
-        serde_yaml::from_str(&std::fs::read_to_string(&yaml_path).unwrap()).unwrap();
+        xiaoguai_yaml::from_str(&std::fs::read_to_string(&yaml_path).unwrap()).unwrap();
     assert_eq!(parsed, row.manifest);
 }

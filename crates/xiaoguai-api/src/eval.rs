@@ -306,7 +306,7 @@ pub fn build_case_yaml(
     let case_id = format!("from-session-{}", short_id(&session.session_id));
     let case = case_from_session_internal(&case_id, session);
     let case_yaml =
-        serde_yaml::to_string(&case).map_err(|e| EvalServiceError::Backend(e.to_string()))?;
+        xiaoguai_yaml::to_string(&case).map_err(|e| EvalServiceError::Backend(e.to_string()))?;
     Ok(CaseFromSessionResponse {
         case_yaml,
         suggested_filename: format!("{case_id}.{CASE_EXTENSION}"),
@@ -544,7 +544,7 @@ mod tests {
         assert_eq!(resp.tool_invocation_count, 2);
         assert!(resp.suggested_filename.ends_with(".eval.yaml"));
         // The YAML must parse back into a valid EvalCase.
-        let case: EvalCase = serde_yaml::from_str(&resp.case_yaml).expect("yaml round-trips");
+        let case: EvalCase = xiaoguai_yaml::from_str(&resp.case_yaml).expect("yaml round-trips");
         assert_eq!(case.id, resp.case_id);
         assert_eq!(case.tags, vec!["regression", "from-session"]);
         // Two tool turns + one final text turn.
@@ -576,7 +576,7 @@ mod tests {
         };
         let resp = build_case_yaml(&session).unwrap();
         assert_eq!(resp.tool_invocation_count, 0);
-        let case: EvalCase = serde_yaml::from_str(&resp.case_yaml).unwrap();
+        let case: EvalCase = xiaoguai_yaml::from_str(&resp.case_yaml).unwrap();
         let script = case.mock_script.as_ref().unwrap();
         assert_eq!(script.turns.len(), 1);
         assert!(case

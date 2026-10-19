@@ -275,7 +275,7 @@ async fn wire_pack_anomalies(
         let spec_path = dir.join(&entry.path);
         let yaml = std::fs::read_to_string(&spec_path)
             .with_context(|| format!("read anomaly spec {}", spec_path.display()))?;
-        let spec: AnomalySpec = serde_yaml::from_str(&yaml)
+        let spec: AnomalySpec = xiaoguai_yaml::from_str(&yaml)
             .with_context(|| format!("parse anomaly spec {}", spec_path.display()))?;
         let trigger = trigger_from_schedule(&spec.schedule)?;
         let sinks = anomaly_sinks(&spec.on_anomaly);
@@ -397,7 +397,7 @@ async fn wire_pack_watches(
         let spec_path = dir.join(&entry.path);
         let yaml = std::fs::read_to_string(&spec_path)
             .with_context(|| format!("read watch spec {}", spec_path.display()))?;
-        let spec: WatchSpec = serde_yaml::from_str(&yaml)
+        let spec: WatchSpec = xiaoguai_yaml::from_str(&yaml)
             .with_context(|| format!("parse watch spec {}", spec_path.display()))?;
         let source = serde_json::to_value(&spec.source)
             .with_context(|| format!("serialize watch source for '{}'", spec.id))?;
@@ -739,7 +739,8 @@ mod tests {
     async fn reference_pack_daily_token_spend_runs_end_to_end() {
         let yaml =
             include_str!("../../../packs/observability-starter/anomalies/daily-token-spend.yaml");
-        let spec: AnomalySpec = serde_yaml::from_str(yaml).expect("reference anomaly spec parses");
+        let spec: AnomalySpec =
+            xiaoguai_yaml::from_str(yaml).expect("reference anomaly spec parses");
         assert_eq!(spec.id, "daily-token-spend");
 
         // Stand up the real token_usage columns the KPI query reads.

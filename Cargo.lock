@@ -193,6 +193,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotate-snippets"
+version = "0.12.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f211a51805bc641f3ad5b7664c77d2547af685cc33b4cd8d31964027a46f13f1"
+dependencies = [
+ "anstyle",
+ "memchr",
+ "unicode-width",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1789,6 +1800,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "encoding_rs_io"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fba3fe847045ecff794b9c138293a80db914678c453ad63fbf0c6a9eb6e00b22"
+dependencies = [
+ "encoding_rs",
+]
+
+[[package]]
 name = "endian-type"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2318,6 +2338,16 @@ dependencies = [
  "smallvec",
  "spinning_top",
  "web-time",
+]
+
+[[package]]
+name = "granit-parser"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da55feca5d1625466bae068f9fd4b87892caeae70c3fe671ddb0f50d41aebf37"
+dependencies = [
+ "arraydeque",
+ "smallvec",
 ]
 
 [[package]]
@@ -3506,6 +3536,12 @@ dependencies = [
  "cfg_aliases",
  "libc",
 ]
+
+[[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "nom"
@@ -5290,6 +5326,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-saphyr"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a253edfdea34032da21af84e16fcc94f4c7a6ba237f9f3bc2dbf43cea8535c44"
+dependencies = [
+ "annotate-snippets",
+ "base64 0.23.1",
+ "encoding_rs_io",
+ "granit-parser",
+ "nohash-hasher",
+ "num-traits",
+ "serde_core",
+ "smallvec",
+ "zmij",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5387,19 +5440,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap 2.14.0",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
 ]
 
 [[package]]
@@ -6795,12 +6835,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
-
-[[package]]
 name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8106,7 +8140,6 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
- "serde_yaml",
  "sqlx",
  "tempfile",
  "thiserror 2.0.20",
@@ -8131,6 +8164,7 @@ dependencies = [
  "xiaoguai-storage",
  "xiaoguai-tasks",
  "xiaoguai-types",
+ "xiaoguai-yaml",
 ]
 
 [[package]]
@@ -8198,7 +8232,6 @@ dependencies = [
  "rustyline",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha2 0.11.0",
  "sqlx",
  "tar",
@@ -8221,6 +8254,7 @@ dependencies = [
  "xiaoguai-scheduler",
  "xiaoguai-storage",
  "xiaoguai-types",
+ "xiaoguai-yaml",
 ]
 
 [[package]]
@@ -8249,11 +8283,11 @@ dependencies = [
  "humantime-serde",
  "serde",
  "serde_json",
- "serde_yaml",
  "tempfile",
  "thiserror 2.0.20",
  "tracing",
  "xiaoguai-types",
+ "xiaoguai-yaml",
 ]
 
 [[package]]
@@ -8272,7 +8306,6 @@ dependencies = [
  "sd-notify",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha2 0.11.0",
  "sqlx",
  "tempfile",
@@ -8308,6 +8341,7 @@ dependencies = [
  "xiaoguai-tasks",
  "xiaoguai-types",
  "xiaoguai-watch",
+ "xiaoguai-yaml",
 ]
 
 [[package]]
@@ -8319,7 +8353,6 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "serde_yaml",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -8328,6 +8361,7 @@ dependencies = [
  "xiaoguai-agent",
  "xiaoguai-audit",
  "xiaoguai-llm",
+ "xiaoguai-yaml",
 ]
 
 [[package]]
@@ -8857,7 +8891,6 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "serde_yaml",
  "sqlx",
  "tempfile",
  "thiserror 2.0.20",
@@ -8865,6 +8898,7 @@ dependencies = [
  "uuid",
  "xiaoguai-audit",
  "xiaoguai-storage",
+ "xiaoguai-yaml",
 ]
 
 [[package]]
@@ -8893,7 +8927,6 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha2 0.11.0",
  "sqlx",
  "thiserror 2.0.20",
@@ -8903,6 +8936,17 @@ dependencies = [
  "uuid",
  "xiaoguai-observability",
  "xiaoguai-storage",
+ "xiaoguai-yaml",
+]
+
+[[package]]
+name = "xiaoguai-yaml"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -1803,7 +1803,7 @@ async fn handle_tasks(api_base: String, action: TasksCmd) -> Result<()> {
 fn print_value(v: &serde_json::Value, format: &str) -> Result<()> {
     match format {
         "json" => println!("{}", serde_json::to_string_pretty(v)?),
-        "yaml" => print!("{}", serde_yaml::to_string(v)?),
+        "yaml" => print!("{}", xiaoguai_yaml::to_string(v)?),
         _ => println!("{}", serde_json::to_string_pretty(v)?),
     }
     Ok(())

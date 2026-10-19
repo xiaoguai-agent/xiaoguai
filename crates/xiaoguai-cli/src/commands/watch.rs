@@ -55,7 +55,7 @@ pub struct StartArgs {
 pub async fn start(args: StartArgs) -> Result<JsonValue> {
     let raw = std::fs::read_to_string(&args.file)
         .with_context(|| format!("read watch spec file: {}", args.file.display()))?;
-    let spec: JsonValue = serde_yaml::from_str(&raw).context("parse watch spec YAML")?;
+    let spec: JsonValue = xiaoguai_yaml::from_str(&raw).context("parse watch spec YAML")?;
     let client = Client::new();
     let resp = client
         .post(format!("{}/v1/watch", args.api_base))

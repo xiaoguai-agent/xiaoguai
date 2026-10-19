@@ -149,7 +149,7 @@ async fn agent_proposes_then_admin_approves_full_lifecycle() {
         "approval should write YAML to skills_dir"
     );
     let parsed: SkillManifest =
-        serde_yaml::from_str(&std::fs::read_to_string(&yaml_path).unwrap()).unwrap();
+        xiaoguai_yaml::from_str(&std::fs::read_to_string(&yaml_path).unwrap()).unwrap();
     assert_eq!(parsed, revised_draft());
 
     // ── Step 5: Final audit chain ─────────────────────────────────────────

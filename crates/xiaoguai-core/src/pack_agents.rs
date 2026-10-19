@@ -37,7 +37,7 @@ pub struct AgentDef {
     /// 4b), not a conversational team member. Captured loosely — the shape
     /// varies across packs and v1 only needs the count.
     #[serde(default)]
-    pub triggers: Vec<serde_yaml::Value>,
+    pub triggers: Vec<serde_json::Value>,
     #[serde(default)]
     pub llm: AgentLlm,
     #[serde(default)]
@@ -134,7 +134,7 @@ pub async fn parse_agent_def(path: &Path) -> Result<AgentDef> {
     let raw = tokio::fs::read_to_string(path)
         .await
         .with_context(|| format!("read agent def: {}", path.display()))?;
-    let def: AgentDef = serde_yaml::from_str(&raw)
+    let def: AgentDef = xiaoguai_yaml::from_str(&raw)
         .with_context(|| format!("parse agent def: {}", path.display()))?;
     Ok(def)
 }
@@ -261,7 +261,7 @@ mod tests {
     }
 
     fn manifest(yaml_body: &str) -> PackManifest {
-        serde_yaml::from_str(yaml_body).expect("manifest parses")
+        xiaoguai_yaml::from_str(yaml_body).expect("manifest parses")
     }
 
     #[tokio::test]
@@ -279,9 +279,10 @@ mod tests {
 
     #[test]
     fn classify_splits_on_triggers() {
-        let conv: AgentDef = serde_yaml::from_str("name: a\nsystem_prompt: hi\n").unwrap();
+        let conv: AgentDef = xiaoguai_yaml::from_str("name: a\nsystem_prompt: hi\n").unwrap();
         assert_eq!(classify(&conv), AgentRole::Conversational);
-        let react: AgentDef = serde_yaml::from_str("name: b\ntriggers:\n  - event: e\n").unwrap();
+        let react: AgentDef =
+            xiaoguai_yaml::from_str("name: b\ntriggers:\n  - event: e\n").unwrap();
         assert_eq!(classify(&react), AgentRole::Reactive);
     }
 

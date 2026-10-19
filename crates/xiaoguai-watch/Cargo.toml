@@ -13,7 +13,7 @@ xiaoguai-storage = { path = "../xiaoguai-storage" }
 async-trait    = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
-serde_yaml     = { workspace = true }
+xiaoguai-yaml = { path = "../xiaoguai-yaml" }
 sqlx           = { workspace = true }
 tokio          = { workspace = true, features = ["time", "sync", "macros", "rt"] }
 thiserror      = { workspace = true }

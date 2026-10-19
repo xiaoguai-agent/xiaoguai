@@ -1,0 +1,18 @@
+[package]
+name = "xiaoguai-yaml"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "YAML (de)serialization for Xiaoguai: one parser, one policy (serde-saphyr)."
+
+[dependencies]
+serde = { workspace = true }
+serde-saphyr = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
