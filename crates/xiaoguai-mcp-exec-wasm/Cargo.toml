@@ -60,8 +60,8 @@ tracing-subscriber = { workspace = true }
 # (avoids compiling features we never use: wat, profiling, etc.).
 # `p1` is the preview1 WASI surface; `async` covers both the wasmtime
 # async runtime and the component-model dep we need for wasi p1.
-wasmtime = { version = "48.0.0", default-features = false, features = ["async", "cranelift", "runtime", "parallel-compilation"] }
-wasmtime-wasi = { version = "48.0.0", default-features = false, features = ["p1"] }
+wasmtime = { version = "48.0.6", default-features = false, features = ["async", "cranelift", "runtime", "parallel-compilation"] }
+wasmtime-wasi = { version = "48.0.6", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

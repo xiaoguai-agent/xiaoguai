@@ -127,7 +127,7 @@ impl Loader for PptxLoader {
         let mut slide_names: Vec<String> = (0..archive.len())
             .filter_map(|i| {
                 let f = archive.by_index(i).ok()?;
-                let name = f.name().to_string();
+                let name = f.name().ok()?.into_owned();
                 if name.starts_with("ppt/slides/slide")
                     && name.to_ascii_lowercase().ends_with(".xml")
                 {
