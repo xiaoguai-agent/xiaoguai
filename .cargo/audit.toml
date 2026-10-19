@@ -38,4 +38,12 @@ ignore = [
     # semver-compatible fixed release exists, so the fix has to come from
     # tantivy. Mirrors deny.toml; revisit when tantivy bumps lru.
     "RUSTSEC-2026-0253",
+
+    # unsafe-libyaml: unmaintained (repo archived 2024-03). Transitive via
+    # serde_yaml 0.9 (itself deprecated), used for config / skill / eval YAML.
+    # Unmaintained flag only — no known vulnerability and RustSec offers no
+    # patched version. Mirrors deny.toml. Drop once serde_yaml is replaced by
+    # a safe-Rust parser (serde-saphyr); forks such as serde_norway still
+    # ship the same c2rust translation, so switching to one is not a fix.
+    "RUSTSEC-2024-0449",
 ]

@@ -17,6 +17,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- **Cleared the 34 RustSec advisories that had kept the nightly audit red since
+  2026-08-28 (#513)** — wasmtime / wasmtime-wasi 48.0.0 → 48.0.6 (22 advisories,
+  one critical, in the WASM MCP sandbox); zip 8 → 9.0.5 (symlink escape and
+  SUID/SGID preservation on extraction, two of them critical/high); quinn-proto
+  0.11.15 → 0.11.19 and rustls 0.23.40 → 0.23.46 (memory exhaustion and TLS
+  fixes); the yanked chacha20 0.10.0 → 0.10.2, which had also failed
+  `cargo-deny` on every dependabot PR. zip 9 makes `ZipFile::name()` fallible;
+  the DOCX/PPTX detector and the PPTX slide scan treat an undecodable entry name
+  as "not a match", as they already did for an unreadable entry.
+  `unsafe-libyaml` (unmaintained, via the deprecated `serde_yaml`) is ignored
+  with a written reason in both audit configs until `serde_yaml` is replaced —
+  there is no patched version to move to.
+
 ### Added
 - **Guard: every required status check must be able to report inside the merge
   queue** — the queue builds each entry on a temporary branch and fires

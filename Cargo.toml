@@ -183,7 +183,7 @@ pdf-extract = "0.12"
 # proved heavy for a one-template path; pdf-writer gives us deterministic
 # output with a much smaller surface.
 pdf-writer = "0.15"
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 scraper = "0.27"
 pulldown-cmark = { version = "0.13", default-features = false }
 
